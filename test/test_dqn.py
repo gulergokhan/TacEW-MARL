@@ -10,21 +10,40 @@ def main():
 
     agent = DQNAgent(
         state_size=len(state),
-        action_size=4
+        action_size=4,
+        batch_size=4
     )
 
     print("Initial State:", state)
 
-    action = agent.select_action(state)
+    for step in range(5):
 
-    print("Selected Action:", action)
+        action = agent.select_action(state)
 
-    next_state, reward, done, info = env.step(action)
+        next_state, reward, done, info = env.step(action)
 
-    print("Next State:", next_state)
-    print("Reward:", reward)
-    print("Done:", done)
+        agent.remember(
+            state,
+            action,
+            reward,
+            next_state,
+            done
+        )
+
+        loss = agent.learn()
+
+        print(
+            f"Step={step + 1} | "
+            f"Action={action} | "
+            f"Reward={reward} | "
+            f"Loss={loss}"
+        )
+
+        state = next_state
+
+        if done:
+            break
 
 
 if __name__ == "__main__":
-    main()
+    main() 
