@@ -9,6 +9,7 @@ from configs.environment_config import (
     GOAL_REWARD,
     DESTRUCTION_PENALTY,
     INVALID_MOVE_PENALTY,
+    DISTANCE_REWARD_SCALE,
 )
 
 from environment.entities.scout import Scout
@@ -61,6 +62,8 @@ class GridWorld:
 
         old_position = self.scout.position
 
+        old_goal_distance = (abs(old_position[0] - self.goal[0]) + abs(old_position[1] - self.goal[1]))
+
         new_position = self._calculate_new_position(
             old_position,
             action
@@ -77,6 +80,10 @@ class GridWorld:
             self.scout.move(new_position)
 
             reward = STEP_REWARD
+
+        new_goal_distance = (abs(self.scout.position[0] - self.goal[0]) + abs(self.scout.position[1] - self.goal[1]))
+        distance_progress = (old_goal_distance - new_goal_distance)
+        reward += (distance_progress * DISTANCE_REWARD_SCALE)
 
         # Radar detection kontrolü
         detected = self._check_radar_detection()

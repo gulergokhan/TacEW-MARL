@@ -1,3 +1,4 @@
+import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -31,7 +32,11 @@ class DQNAgent:
         learning_rate=0.001,
         gamma=0.99,
         buffer_size=10000,
-        batch_size=64
+        batch_size=64,
+        epsilon = 1.0,
+        epsilon_min = 0.05,
+        epsilon_decay = 0.995,
+        target_update_freq = 100
     ):
 
         self.state_size = state_size
@@ -40,10 +45,27 @@ class DQNAgent:
         self.gamma = gamma
         self.batch_size = batch_size
 
+        self.epsilon = epsilon
+        self.epsilon_min = epsilon_min
+        self.epsilon_decay = epsilon_decay
+        self.target_update_freq = target_update_freq
+        self.learn_step_count = 0
+
         self.model = DQN(
             state_size,
             action_size
         )
+
+        self.target_model = DQN(
+            state_size,
+            action_size
+        )
+
+        self.target_model.load_state_dict(
+            self.model.state_dict()
+        )
+
+        self.target_model.eval()
 
         self.optimizer = optim.Adam(
             self.model.parameters(),
@@ -54,7 +76,9 @@ class DQNAgent:
             buffer_size
         )
 
-    def select_action(self, state):
+    def select_action(self, state, training=True):
+        if training and random.random() < self.epsilon:
+            return random.randrange(self.action_size)
 
         state = torch.tensor(
             state,
@@ -70,6 +94,12 @@ class DQNAgent:
         ).item()
 
         return action
+
+    def decay_epsilon(self):
+        self.epsilon = max(
+            self.epsilon_min,
+            self.epsilon * self.epsilon_decay
+        )
 
     def remember(
         self,
@@ -135,9 +165,9 @@ class DQNAgent:
         # Next Q-values
         with torch.no_grad():
 
-            next_q_values = self.model(
+            next_q_values = self.target_model(
                 next_states
-            ).max(1)[0]
+            ).max(dim=1).values
 
         # Q-learning target
         target_q_values = rewards + (
@@ -147,7 +177,7 @@ class DQNAgent:
         )
 
         # Loss
-        loss = nn.MSELoss()(
+        loss = nn.SmoothL1Loss()(
             current_q_values,
             target_q_values
         )
@@ -157,6 +187,24 @@ class DQNAgent:
 
         loss.backward()
 
+        nn.utils.clip_grad_norm_(
+        self.model.parameters(),
+        max_norm=10.0
+        )
+
+
+
         self.optimizer.step()
 
-        return loss.item() 
+        self.learn_step_count += 1
+
+        if (
+            self.learn_step_count
+            % self.target_update_freq
+            == 0
+        ):
+            self.target_model.load_state_dict(
+                self.model.state_dict()
+            )
+
+        return loss.item()
