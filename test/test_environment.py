@@ -16,8 +16,11 @@ def main():
     state = env.reset()
 
     print("Initial State:", state)
-    print("Initial Position:", env.scout.position)
-    print("-" * 70)
+    print("State Type:", type(state))
+    print("State Size:", len(state))
+
+    if hasattr(state, "shape"):
+     print("State Shape:", state.shape)
 
     done = False
     total_reward = 0
