@@ -1,52 +1,59 @@
-import random
+import unittest
+
 from environment.gridworld import GridWorld
 
 
-ACTION_NAMES = {
-    0: "UP",
-    1: "DOWN",
-    2: "LEFT",
-    3: "RIGHT",
-}
+class TestGridWorld(unittest.TestCase):
 
+    def setUp(self):
+        self.env = GridWorld()
 
-def main():
-    env = GridWorld()
+    def test_reset_returns_initial_state(self):
+        observation = self.env.reset()
 
-    state = env.reset()
+        self.assertEqual(self.env.scout.position, (0, 0))
+        self.assertTrue(self.env.scout.alive)
+        self.assertEqual(self.env.current_step, 0)
+        self.assertEqual(len(observation), 8)
 
-    print("Initial State:", state)
-    print("State Type:", type(state))
-    print("State Size:", len(state))
+    def test_invalid_move_keeps_same_position(self):
+        self.env.reset()
 
-    if hasattr(state, "shape"):
-     print("State Shape:", state.shape)
+        observation, reward, done, info = self.env.step(0)
 
-    done = False
-    total_reward = 0
+        self.assertEqual(self.env.scout.position, (0, 0))
+        self.assertEqual(reward, -5)
+        self.assertFalse(done)
+        self.assertEqual(info["step"], 1)
 
-    while not done:
+    def test_radar_detection_ends_episode(self):
+        self.env.reset()
 
-        # 0, 1, 2, 3 arasından rastgele action seç
-        action = random.randint(0, 3)
+        actions = [1, 1, 3, 3]
 
-        next_state, reward, done, info = env.step(action)
+        for action in actions:
+            observation, reward, done, info = (
+                self.env.step(action)
+            )
 
-        total_reward += reward
+            if done:
+                break
 
-        print(
-            f"Step={info['step']:3} | "
-            f"Action={ACTION_NAMES[action]:5} | "
-            f"Position={info['scout_position']} | "
-            f"Reward={reward:4} | "
-            f"Detected={info['detected']}"
-        )
+        self.assertTrue(info["detected"])
+        self.assertTrue(done)
+        self.assertFalse(self.env.scout.alive)
 
-    print("-" * 70)
-    print("Episode finished.")
-    print("Total reward:", total_reward)
-    print("Final position:", env.scout.position)
+    def test_reaching_goal_ends_episode(self):
+        self.env.reset()
+        self.env.scout.position = (9, 8)
+
+        observation, reward, done, info = self.env.step(3)
+
+        self.assertEqual(self.env.scout.position, (9, 9))
+        self.assertTrue(info["reached_goal"])
+        self.assertTrue(done)
+        self.assertEqual(reward, 101)
 
 
 if __name__ == "__main__":
-    main()
+    unittest.main()

@@ -161,13 +161,18 @@ class DQNAgent:
             1,
             actions
         ).squeeze(1)
-
+        # Double DQN:
+        # Online model en iyi aksiyonu seçer.
+        # Target model seçilen aksiyonun değerini hesaplar
         # Next Q-values
         with torch.no_grad():
 
+            next_actions = self.model(
+                next_states
+            ).argmax(dim=1,keepdim=True)
             next_q_values = self.target_model(
                 next_states
-            ).max(dim=1).values
+            ).gather(1, next_actions).squeeze(1)
 
         # Q-learning target
         target_q_values = rewards + (

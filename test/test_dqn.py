@@ -1,49 +1,62 @@
-from environment.gridworld import GridWorld
+import math
+import random
+import unittest
+
+import torch
+
 from agent.dqn_agent import DQNAgent
 
 
-def main():
+class TestDQNAgent(unittest.TestCase):
 
-    env = GridWorld()
+    def setUp(self):
+        random.seed(42)
+        torch.manual_seed(42)
 
-    state = env.reset()
-
-    agent = DQNAgent(
-        state_size=len(state),
-        action_size=4,
-        batch_size=4
-    )
-
-    print("Initial State:", state)
-
-    for step in range(5):
-
-        action = agent.select_action(state)
-
-        next_state, reward, done, info = env.step(action)
-
-        agent.remember(
-            state,
-            action,
-            reward,
-            next_state,
-            done
+        self.agent = DQNAgent(
+            state_size=2,
+            action_size=4,
+            batch_size=4,
+            target_update_freq=2
         )
 
-        loss = agent.learn()
-
-        print(
-            f"Step={step + 1} | "
-            f"Action={action} | "
-            f"Reward={reward} | "
-            f"Loss={loss}"
+    def test_select_action_returns_valid_action(self):
+        action = self.agent.select_action(
+            [0.0, 0.0],
+            training=False
         )
 
-        state = next_state
+        self.assertIsInstance(action, int)
+        self.assertIn(action, range(4))
 
-        if done:
-            break
+    def test_learn_returns_none_when_memory_is_small(self):
+        self.agent.remember(
+            [0.0, 0.0],
+            1,
+            -1.0,
+            [0.1, 0.0],
+            False
+        )
+
+        self.assertEqual(len(self.agent.memory), 1)
+        self.assertIsNone(self.agent.learn())
+
+    def test_learn_returns_finite_loss(self):
+        experiences = [
+            ([0.0, 0.0], 0, -1.0, [0.1, 0.0], False),
+            ([0.1, 0.0], 1, -1.0, [0.2, 0.0], False),
+            ([0.2, 0.0], 2, 10.0, [0.3, 0.0], True),
+            ([0.3, 0.0], 3, -1.0, [0.4, 0.0], False),
+        ]
+
+        for experience in experiences:
+            self.agent.remember(*experience)
+
+        loss = self.agent.learn()
+
+        self.assertIsInstance(loss, float)
+        self.assertTrue(math.isfinite(loss))
 
 
 if __name__ == "__main__":
-    main() 
+    unittest.main()
