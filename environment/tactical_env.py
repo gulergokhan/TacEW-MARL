@@ -1,10 +1,13 @@
 from aircraft.aircraft import Aircraft
-from aircraft.models import AircraftType
+from aircraft.models import AircraftType, Position
 
 from weather.client import WeatherClient
 from weather.parser import WeatherParser
 
 from terrain.terrain_map import TerrainMap
+
+from radar.models import Radar
+from radar.radar import RadarSystem
 
 from environment.observation import ObservationEncoder
 
@@ -30,6 +33,15 @@ class TacticalEnv:
         self.latitude = latitude
         self.longitude = longitude
 
+        # Maximum number of steps per episode
+        self.max_steps = 100
+
+        # Goal position
+        self.goal_position = Position(
+            x=8,
+            y=8,
+        )
+
         # -----------------------------
         # Terrain
         # -----------------------------
@@ -46,9 +58,31 @@ class TacticalEnv:
         self.weather_client = WeatherClient()
 
         # Weather is loaded only once.
-        # It will not be requested again
-        # during every environment reset.
         self.weather = self._load_weather()
+
+        # -----------------------------
+        # Radar
+        # -----------------------------
+
+        self.radar_system = RadarSystem(
+            radars=[
+                Radar(
+                    radar_id="radar_01",
+                    position=Position(x=5, y=5),
+                    detection_range=3.0,
+                ),
+                Radar(
+                    radar_id="radar_02",
+                    position=Position(x=2, y=7),
+                    detection_range=2.5,
+                ),
+                Radar(
+                    radar_id="radar_03",
+                    position=Position(x=7, y=3),
+                    detection_range=2.5,
+                ),
+            ]
+        )
 
         # -----------------------------
         # Observation Encoder
@@ -66,17 +100,14 @@ class TacticalEnv:
         self.scout = None
         self.hunter = None
 
+        # Step counter
+        self.current_step = 0
+
     # ==================================================
     # WEATHER
     # ==================================================
 
     def _load_weather(self):
-        """
-        Load weather data from the Weather API.
-        This method is called only once when
-        TacticalEnv is created.
-        """
-
         weather_data = self.weather_client.get_weather(
             latitude=self.latitude,
             longitude=self.longitude,
@@ -91,13 +122,8 @@ class TacticalEnv:
     # ==================================================
 
     def reset(self):
-        """
-        Reset the tactical environment.
 
-        Aircraft positions and fuel are reset.
-
-        Weather data is NOT requested again.
-        """
+        self.current_step = 0
 
         self.scout = Aircraft(
             aircraft_id="scout_01",
@@ -113,11 +139,14 @@ class TacticalEnv:
             start_y=8,
         )
 
+        self.radar_system.reset()
+
         state = self._get_state()
 
         observation = self.observation_encoder.encode(
             state,
             self.terrain,
+            self.radar_system,
         )
 
         return observation
@@ -127,9 +156,8 @@ class TacticalEnv:
     # ==================================================
 
     def step(self, action: int):
-        """
-        Execute one action for the scout aircraft.
-        """
+
+        self.current_step += 1
 
         old_x = self.scout.state.position.x
         old_y = self.scout.state.position.y
@@ -169,6 +197,13 @@ class TacticalEnv:
         done = False
 
         # -----------------------------
+        # STAY penalty
+        # -----------------------------
+
+        if action == self.ACTION_STAY:
+            reward = -0.2
+
+        # -----------------------------
         # Grid boundary
         # -----------------------------
 
@@ -176,17 +211,17 @@ class TacticalEnv:
             new_x,
             new_y,
         ):
-            reward = -1.0
+            reward -= 1.0
 
         # -----------------------------
-        # Terrain passability
+        # Terrain
         # -----------------------------
 
         elif not self.terrain.is_passable(
             new_x,
             new_y,
         ):
-            reward = -1.0
+            reward -= 1.0
 
         # -----------------------------
         # Valid movement
@@ -204,14 +239,68 @@ class TacticalEnv:
             )
 
         # -----------------------------
-        # Fuel check
+        # Radar Detection
+        # -----------------------------
+
+        detections = self.radar_system.detect(
+            self.scout.state.position
+        )
+
+        if detections:
+            reward -= 5.0
+
+        # -----------------------------
+        # Distance to Goal
+        # -----------------------------
+
+        old_distance = self._distance_to_goal(
+            old_x,
+            old_y,
+        )
+
+        new_distance = self._distance_to_goal(
+            self.scout.state.position.x,
+            self.scout.state.position.y,
+        )
+
+        # Reward getting closer
+        if new_distance < old_distance:
+            reward += 0.2
+
+        # Penalty moving away
+        elif new_distance > old_distance:
+            reward -= 0.1
+
+        # -----------------------------
+        # Goal
+        # -----------------------------
+
+        if (
+            self.scout.state.position.x
+            == self.goal_position.x
+            and
+            self.scout.state.position.y
+            == self.goal_position.y
+        ):
+            reward += 20.0
+            done = True
+
+        # -----------------------------
+        # Fuel
         # -----------------------------
 
         if self.scout.state.fuel <= 0:
             done = True
 
         # -----------------------------
-        # New state
+        # Maximum steps
+        # -----------------------------
+
+        if self.current_step >= self.max_steps:
+            done = True
+
+        # -----------------------------
+        # Observation
         # -----------------------------
 
         state = self._get_state()
@@ -219,14 +308,46 @@ class TacticalEnv:
         observation = self.observation_encoder.encode(
             state,
             self.terrain,
+            self.radar_system,
         )
+
+        # -----------------------------
+        # Info
+        # -----------------------------
+
+        info = {
+            "radar_detections": detections,
+            "goal_reached": (
+                self.scout.state.position.x
+                == self.goal_position.x
+                and
+                self.scout.state.position.y
+                == self.goal_position.y
+            ),
+            "step": self.current_step,
+        }
 
         return (
             observation,
             reward,
             done,
-            {},
+            info,
         )
+
+    # ==================================================
+    # DISTANCE
+    # ==================================================
+
+    def _distance_to_goal(
+        self,
+        x: int,
+        y: int,
+    ) -> float:
+
+        dx = x - self.goal_position.x
+        dy = y - self.goal_position.y
+
+        return (dx ** 2 + dy ** 2) ** 0.5
 
     # ==================================================
     # GRID CHECK
@@ -237,14 +358,11 @@ class TacticalEnv:
         x: int,
         y: int,
     ) -> bool:
-        """
-        Check whether the given position
-        is inside the environment grid.
-        """
 
         return (
             0 <= x < self.width
-            and 0 <= y < self.height
+            and
+            0 <= y < self.height
         )
 
     # ==================================================
@@ -252,9 +370,6 @@ class TacticalEnv:
     # ==================================================
 
     def _get_state(self):
-        """
-        Build the current tactical state.
-        """
 
         return {
             "scout": {

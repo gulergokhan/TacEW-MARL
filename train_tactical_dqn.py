@@ -1,12 +1,12 @@
 import numpy as np
+import os
+import torch
 
 from environment.tactical_env import TacticalEnv
 from dqn.agent import DQNAgent
 
 
 NUM_EPISODES = 500
-
-OBSERVATION_SIZE = 57
 ACTION_SIZE = 5
 
 
@@ -19,14 +19,28 @@ def main():
         longitude=32.8597,
     )
 
+    # Get observation size directly from environment
+    initial_observation = env.reset()
+
+    observation_size = len(initial_observation)
+
+    print(
+        f"Observation Size: {observation_size}"
+    )
+
+    print(
+        f"Action Size: {ACTION_SIZE}"
+    )
+
     agent = DQNAgent(
-        observation_size=OBSERVATION_SIZE,
+        observation_size=observation_size,
         action_size=ACTION_SIZE,
     )
 
     episode_rewards = []
     episode_losses = []
 
+    print()
     print("Tactical DQN Training")
     print("======================")
 
@@ -81,6 +95,7 @@ def main():
             episode_losses.append(0.0)
 
         if episode % 10 == 0:
+
             average_reward = np.mean(
                 episode_rewards[-10:]
             )
@@ -109,6 +124,21 @@ def main():
     print(
         "Final Average Reward:",
         np.mean(episode_rewards[-10:]),
+    )
+
+    # Save trained model
+    os.makedirs(
+        "models",
+        exist_ok=True,
+    )
+
+    torch.save(
+        agent.online_network.state_dict(),
+        "models/tactical_dqn.pth",
+    )
+
+    print(
+        "Model saved to models/tactical_dqn.pth"
     )
 
 
