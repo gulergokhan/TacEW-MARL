@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>TacEW-MARL — Sortie Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0a0f0d;
+    --panel: #101815;
+    --panel-2: #0d1512;
+    --line: #1e2b26;
+    --scope: #35e28a;
+    --scope-dim: #1f6b47;
+    --amber: #ffb020;
+    --red: #ff4d4d;
+    --text: #d7ece2;
+    --text-dim: #7a938a;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --disp: 'Space Grotesk', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--mono); font-size:13px;
+    background-image:
+      radial-gradient(circle at 20% -10%, #0e2a1c33, transparent 40%),
+      radial-gradient(circle at 100% 110%, #0e2a1c22, transparent 40%);
+  }
+  header{
+    display:flex; align-items:baseline; gap:14px;
+    padding:18px 24px 12px; border-bottom:1px solid var(--line);
+  }
+  header h1{
+    font-family:var(--disp); font-size:20px; font-weight:700; margin:0;
+    letter-spacing:0.5px; color:#eafff2;
+  }
+  header .tag{
+    color:var(--scope); font-size:11px; letter-spacing:2px; text-transform:uppercase;
+    border:1px solid var(--scope-dim); padding:3px 8px; border-radius:3px;
+  }
+  header .sub{color:var(--text-dim); font-size:12px; margin-left:auto;}
+  #loadBtn{
+    background:var(--panel-2); border:1px solid var(--line); color:var(--scope);
+    font-family:var(--mono); font-size:11px; padding:6px 10px; border-radius:4px;
+    cursor:pointer; letter-spacing:1px;
+  }
+  #loadBtn:hover{border-color:var(--scope-dim);}
+  main{
+    display:grid;
+    grid-template-columns: minmax(360px, 640px) 340px;
+    gap:16px; padding:16px 24px 24px; align-items:start;
+  }
+  .panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:14px 16px;
+  }
+  .panel h2{
+    font-family:var(--disp); font-size:12px; letter-spacing:1.5px; text-transform:uppercase;
+    color:var(--text-dim); margin:0 0 10px;
+  }
+  #mapWrap{position:relative;}
+  canvas#map{width:100%; display:block; border-radius:6px; background:#060a08;}
+  .legend{display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; font-size:11px; color:var(--text-dim);}
+  .legend span{display:inline-flex; align-items:center; gap:5px;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .controls{display:flex; align-items:center; gap:10px; margin-top:14px;}
+  .controls button{
+    background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+    width:34px; height:30px; border-radius:5px; cursor:pointer; font-size:14px;
+  }
+  .controls button:hover{border-color:var(--scope-dim); color:var(--scope);}
+  #slider{flex:1; accent-color:var(--scope);}
+  #stepLabel{color:var(--scope); font-size:12px; min-width:70px; text-align:right;}
+  .stat-row{display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px dashed var(--line); font-size:12px;}
+  .stat-row:last-child{border-bottom:none;}
+  .stat-row .k{color:var(--text-dim);}
+  .stat-row .v{color:var(--text); font-weight:500;}
+  .v.pos{color:var(--scope);}
+  .v.neg{color:var(--red);}
+  table{width:100%; border-collapse:collapse; font-size:11.5px; margin-top:4px;}
+  th{text-align:left; color:var(--text-dim); font-weight:500; padding:4px 4px; border-bottom:1px solid var(--line);}
+  td{padding:5px 4px; border-bottom:1px solid #14201b;}
+  .state-pill{
+    padding:2px 7px; border-radius:10px; font-size:10px; letter-spacing:0.5px; font-weight:700;
+  }
+  .state-SAFE{background:#123322; color:var(--scope);}
+  .state-TRACK{background:#3a3410; color:var(--amber);}
+  .state-LOCK{background:#3a1f10; color:#ff8a3d;}
+  .state-LETHAL{background:#3a1010; color:var(--red);}
+  .jam-tag{font-size:9px; color:#7fd6ff; margin-left:5px;}
+  canvas#rewardChart{width:100%; height:70px; display:block; margin-top:6px;}
+  .weather-grid{display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; font-size:11.5px;}
+  .weather-grid .k{color:var(--text-dim);}
+  .banner{
+    margin-top:10px; padding:8px 10px; border-radius:5px; font-size:11.5px; display:none;
+  }
+  .banner.show{display:block;}
+  .banner.win{background:#0f2b1a; color:var(--scope); border:1px solid var(--scope-dim);}
+  .banner.loss{background:#2b0f0f; color:var(--red); border:1px solid #5a1f1f;}
+  #fileInput{display:none;}
+  ::-webkit-scrollbar{width:8px;} ::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>TacEW-MARL</h1>
+  <span class="tag">Sortie Dashboard</span>
+  <span class="sub" id="metaLine">— sortie kaydı yükleniyor —</span>
+  <button id="loadBtn">JSON YÜKLE (episode_log.json)</button>
+  <input type="file" id="fileInput" accept=".json">
+</header>
+
+<main>
+  <div class="panel" id="mapWrap">
+    <h2>Taktik Harita</h2>
+    <canvas id="map" width="640" height="640"></canvas>
+    <div class="legend">
+      <span><i class="dot" style="background:#274a3a"></i>PLAIN</span>
+      <span><i class="dot" style="background:#5b4636"></i>MOUNTAIN</span>
+      <span><i class="dot" style="background:#1c3a52"></i>WATER</span>
+      <span><i class="dot" style="background:#4a4a2c"></i>URBAN</span>
+      <span><i class="dot" style="background:#2c4a2e"></i>FOREST</span>
+      <span><i class="dot" style="background:#35e28a"></i>Scout</span>
+      <span><i class="dot" style="background:#7fd6ff"></i>Hunter</span>
+      <span><i class="dot" style="background:#ffb020"></i>Radar</span>
+    </div>
+    <div class="controls">
+      <button id="prevBtn">◀</button>
+      <button id="playBtn">▶</button>
+      <button id="nextBtn">▶|</button>
+      <input type="range" id="slider" min="0" max="0" value="0">
+      <span id="stepLabel">0 / 0</span>
+    </div>
+    <div class="banner" id="outcomeBanner"></div>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:16px;">
+    <div class="panel">
+      <h2>Adım Özeti</h2>
+      <div class="stat-row"><span class="k">Scout Aksiyon</span><span class="v" id="actionVal">—</span></div>
+      <div class="stat-row"><span class="k">Hunter Aksiyon</span><span class="v" id="hActionVal">—</span></div>
+      <div class="stat-row"><span class="k">Ödül (bu adım)</span><span class="v" id="rewardVal">—</span></div>
+      <div class="stat-row"><span class="k">Scout Yakıt</span><span class="v" id="fuelVal">—</span></div>
+      <div class="stat-row"><span class="k">Hunter → Hedef</span><span class="v" id="hunterTargetVal">—</span></div>
+      <h2 style="margin-top:14px;">Ödül Zaman Çizelgesi</h2>
+      <canvas id="rewardChart" width="600" height="70"></canvas>
+    </div>
+
+    <div class="panel">
+      <h2>Radar Durumu (J/S Oranı)</h2>
+      <table id="radarTable">
+        <thead><tr><th>Radar</th><th>Durum</th><th>Mesafe</th><th>J/S</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2>Hava Durumu</h2>
+      <div class="weather-grid" id="weatherGrid"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const TERRAIN_COLORS = ["#274a3a","#5b4636","#1c3a52","#4a4a2c","#2c4a2e"];
+const STATE_COLOR = {SAFE:"#35e28a", TRACK:"#ffb020", LOCK:"#ff8a3d", LETHAL:"#ff4d4d"};
+
+let log = [{"step": 1, "scout": {"x": 1, "y": 2, "fuel": 99.0}, "hunter": {"x": 7, "y": 8, "fuel": 99.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 5.0, "js_ratio": 0.60776, "visible": true, "state": "SAFE", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 5.0990195135927845, "js_ratio": 0.5843846153846154, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 6.082762530298219, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": 0.6299504793187782, "action": "DOWN", "hunter_action": null, "lethal_hit": false, "goal_reached": false, "terrain_grid": [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0, 1, 0, 0, 0], [2, 2, 0, 0, 0, 0, 1, 0, 0, 0], [2, 0, 0, 4, 4, 0, 0, 0, 0, 0], [0, 0, 0, 4, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], "radars": [{"radar_id": "radar_01", "x": 5, "y": 5}, {"radar_id": "radar_02", "x": 2, "y": 7}, {"radar_id": "radar_03", "x": 7, "y": 3}], "strike_point": {"x": 1, "y": 8}}, {"step": 2, "scout": {"x": 2, "y": 2, "fuel": 98.0}, "hunter": {"x": 6, "y": 8, "fuel": 98.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 4.242640687119285, "js_ratio": 0.8441111111111111, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 5.0, "js_ratio": 0.60776, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 5.0990195135927845, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.3157369169456825, "action": "RIGHT", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 3, "scout": {"x": 2, "y": 2, "fuel": 96.5}, "hunter": {"x": 5, "y": 8, "fuel": 97.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 4.242640687119285, "js_ratio": 0.8441111111111111, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 5.0, "js_ratio": 0.60776, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 5.0990195135927845, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -1.55, "action": "JAM_SUPPRESS", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 4, "scout": {"x": 2, "y": 3, "fuel": 95.5}, "hunter": {"x": 4, "y": 8, "fuel": 96.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 3.605551275463989, "js_ratio": 1.1687692307692308, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 4.0, "js_ratio": 0.9496249999999998, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 5.0, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.3749683016680845, "action": "DOWN", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 5, "scout": {"x": 2, "y": 3, "fuel": 94.0}, "hunter": {"x": 3, "y": 8, "fuel": 95.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 3.605551275463989, "js_ratio": 1.1687692307692308, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 4.0, "js_ratio": 0.9496249999999998, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 5.0, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -1.55, "action": "JAM_SUPPRESS", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 6, "scout": {"x": 3, "y": 3, "fuel": 93.0}, "hunter": {"x": 2, "y": 8, "fuel": 94.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 2.8284271247461903, "js_ratio": 1.8992499999999992, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 4.123105625617661, "js_ratio": 0.8937647058823528, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 4.0, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.3108181359588216, "action": "RIGHT", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 7, "scout": {"x": 3, "y": 3, "fuel": 91.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 2.8284271247461903, "js_ratio": 1.8992499999999992, "visible": true, "state": "SAFE", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": true}, {"radar_id": "radar_02", "distance": 4.123105625617661, "js_ratio": 0.8937647058823528, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 4.0, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": 0.15000000000000002, "action": "JAM_DECEIVE", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 8, "scout": {"x": 3, "y": 4, "fuel": 90.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 2.23606797749979, "js_ratio": 3.0387999999999993, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": true}, {"radar_id": "radar_02", "distance": 3.1622776601683795, "js_ratio": 1.5193999999999996, "visible": true, "state": "TRACK", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 4.123105625617661, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -1.382056425567373, "action": "DOWN", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 9, "scout": {"x": 4, "y": 4, "fuel": 89.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 1.4142135623730951, "js_ratio": 7.596999999999997, "visible": true, "state": "SAFE", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": true}, {"radar_id": "radar_02", "distance": 3.605551275463989, "js_ratio": 0.9350153846153847, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 3.1622776601683795, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": 0.6962699879404679, "action": "RIGHT", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 10, "scout": {"x": 4, "y": 5, "fuel": 88.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 1.0, "js_ratio": 15.193999999999997, "visible": true, "state": "SAFE", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": true}, {"radar_id": "radar_02", "distance": 2.8284271247461903, "js_ratio": 1.5193999999999996, "visible": true, "state": "TRACK", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 3.605551275463989, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.39314575050761946, "action": "DOWN", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 11, "scout": {"x": 5, "y": 5, "fuel": 87.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 0.1, "js_ratio": 1519.3999999999996, "visible": true, "state": "LOCK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 3.605551275463989, "js_ratio": 0.7480123076923079, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 2.8284271247461903, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.2926406871192848, "action": "RIGHT", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 12, "scout": {"x": 5, "y": 6, "fuel": 86.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 1.0, "js_ratio": 15.193999999999997, "visible": true, "state": "LETHAL", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 3.1622776601683795, "js_ratio": 0.9724159999999998, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 3.605551275463989, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -50.4129105883447, "action": "DOWN", "hunter_action": null, "lethal_hit": true, "goal_reached": false}]
+;
+let terrainGrid = null, radars = [], strikePoint = null, goal = null;
+let gridW = 10, gridH = 10;
+let cur = 0, playing = false, playTimer = null;
+
+function ingest(newLog){
+  log = newLog;
+  const first = log.find(e => e.terrain_grid);
+  if(first){
+    terrainGrid = first.terrain_grid;
+    radars = first.radars;
+    strikePoint = first.strike_point;
+    gridH = terrainGrid.length; gridW = terrainGrid[0].length;
+  }
+  goal = log[0] ? log[0].goal : null;
+  cur = 0;
+  document.getElementById('slider').max = log.length - 1;
+  document.getElementById('metaLine').textContent =
+    `— ${log.length} adım — sonuç: ${outcomeText()}`;
+  render();
+}
+
+function outcomeText(){
+  const last = log[log.length-1];
+  if(!last) return "—";
+  if(last.goal_reached) return "HEDEFE ULAŞILDI";
+  if(last.lethal_hit) return "SCOUT DÜŞÜRÜLDÜ (LETHAL)";
+  return "SÜRE DOLDU";
+}
+
+function cellSize(){ return document.getElementById('map').width / gridW; }
+
+function render(){
+  const entry = log[cur];
+  document.getElementById('stepLabel').textContent = `${cur} / ${log.length-1}`;
+  document.getElementById('slider').value = cur;
+  drawMap(entry);
+  drawSummary(entry);
+  drawRadarTable(entry);
+  drawWeather(entry);
+  drawRewardChart();
+  const banner = document.getElementById('outcomeBanner');
+  if(cur === log.length - 1 && (entry.goal_reached || entry.lethal_hit)){
+    banner.className = 'banner show ' + (entry.goal_reached ? 'win' : 'loss');
+    banner.textContent = entry.goal_reached
+      ? '✓ Scout hedefe ulaştı, sortie başarılı.'
+      : '✕ Scout bir radar tarafından LETHAL menzilde imha edildi.';
+  } else {
+    banner.className = 'banner';
+  }
+}
+
+function drawMap(entry){
+  const canvas = document.getElementById('map');
+  const ctx = canvas.getContext('2d');
+  const cs = cellSize();
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // terrain
+  if(terrainGrid){
+    for(let y=0;y<gridH;y++){
+      for(let x=0;x<gridW;x++){
+        ctx.fillStyle = TERRAIN_COLORS[terrainGrid[y][x]] || TERRAIN_COLORS[0];
+        ctx.fillRect(x*cs, y*cs, cs, cs);
+      }
+    }
+  }
+  // grid lines
+  ctx.strokeStyle = "#0a1512";
+  for(let i=0;i<=gridW;i++){ ctx.beginPath(); ctx.moveTo(i*cs,0); ctx.lineTo(i*cs,canvas.height); ctx.stroke(); }
+  for(let i=0;i<=gridH;i++){ ctx.beginPath(); ctx.moveTo(0,i*cs); ctx.lineTo(canvas.width,i*cs); ctx.stroke(); }
+
+  // goal & strike point
+  if(goal) drawMarker(ctx, goal.x, goal.y, cs, "#eafff2", "G", true);
+  if(strikePoint) drawMarker(ctx, strikePoint.x, strikePoint.y, cs, "#7fd6ff", "S", true);
+
+  // radars: position + detection range ring + state color
+  radars.forEach(r=>{
+    const rs = (entry.radar_status || []).find(s=>s.radar_id===r.radar_id);
+    const color = rs ? (STATE_COLOR[rs.state] || "#ffb020") : "#ffb020";
+    const cx = (r.x+0.5)*cs, cy=(r.y+0.5)*cs;
+    ctx.beginPath();
+    ctx.arc(cx, cy, (rs ? rs.detection_range : 3)*cs, 0, Math.PI*2);
+    ctx.strokeStyle = color + "55";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI*2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    if(rs && (rs.suppression_jam > 0 || rs.deception_jam)){
+      ctx.beginPath();
+      ctx.arc(cx, cy, 9, 0, Math.PI*2);
+      ctx.strokeStyle = "#7fd6ff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  });
+
+  // scout & hunter
+  drawUnit(ctx, entry.scout.x, entry.scout.y, cs, "#35e28a");
+  drawUnit(ctx, entry.hunter.x, entry.hunter.y, cs, "#7fd6ff");
+}
+
+function drawMarker(ctx, x, y, cs, color, label, dashed){
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  if(dashed) ctx.setLineDash([3,3]);
+  ctx.strokeRect(x*cs+2, y*cs+2, cs-4, cs-4);
+  ctx.setLineDash([]);
+  ctx.fillStyle = color;
+  ctx.font = "10px 'JetBrains Mono'";
+  ctx.fillText(label, x*cs+4, y*cs+12);
+}
+
+function drawUnit(ctx, x, y, cs, color){
+  ctx.beginPath();
+  ctx.arc((x+0.5)*cs, (y+0.5)*cs, cs*0.28, 0, Math.PI*2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = "#06110c";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawSummary(entry){
+  document.getElementById('actionVal').textContent = entry.action || "—";
+  document.getElementById('hActionVal').textContent = entry.hunter_action === null || entry.hunter_action === undefined
+    ? "heuristik takip" : entry.hunter_action;
+  const rv = document.getElementById('rewardVal');
+  rv.textContent = entry.reward.toFixed(2);
+  rv.className = 'v ' + (entry.reward >= 0 ? 'pos' : 'neg');
+  document.getElementById('fuelVal').textContent = entry.scout.fuel.toFixed(1);
+  document.getElementById('hunterTargetVal').textContent = entry.hunter.target_reached ? "ULAŞILDI" : "yolda";
+}
+
+function drawRadarTable(entry){
+  const tbody = document.querySelector('#radarTable tbody');
+  tbody.innerHTML = '';
+  (entry.radar_status||[]).forEach(r=>{
+    const tr = document.createElement('tr');
+    const jamTag = r.suppression_jam>0 ? '<span class="jam-tag">SUPPRESS</span>'
+                 : r.deception_jam ? '<span class="jam-tag">DECEIVE</span>' : '';
+    tr.innerHTML = `<td>${r.radar_id}${jamTag}</td>
+      <td><span class="state-pill state-${r.state}">${r.state}</span></td>
+      <td>${r.distance.toFixed(2)}</td>
+      <td>${r.js_ratio.toFixed(2)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function drawWeather(entry){
+  const w = entry.weather || {};
+  const grid = document.getElementById('weatherGrid');
+  const rows = [
+    ["Sıcaklık", w.temperature?.toFixed(1)+" °C"],
+    ["Rüzgar", w.wind_speed?.toFixed(1)+" km/s"],
+    ["Görüş", (w.visibility/1000)?.toFixed(1)+" km"],
+    ["Yağış", w.precipitation?.toFixed(1)+" mm"],
+    ["Bulut", w.cloud_cover?.toFixed(0)+" %"],
+    ["Yön", w.wind_direction?.toFixed(0)+"°"],
+  ];
+  grid.innerHTML = rows.map(([k,v])=>`<span class="k">${k}</span><span>${v}</span>`).join('');
+}
+
+function drawRewardChart(){
+  const canvas = document.getElementById('rewardChart');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const rewards = log.map(e=>e.reward);
+  const max = Math.max(...rewards, 1), min = Math.min(...rewards, -1);
+  const range = max - min || 1;
+  const stepX = canvas.width / Math.max(rewards.length-1,1);
+  ctx.beginPath();
+  rewards.forEach((r,i)=>{
+    const x = i*stepX;
+    const y = canvas.height - ((r-min)/range)*canvas.height;
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle = "#35e28a";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // current step marker
+  const cx = cur*stepX;
+  ctx.beginPath();
+  ctx.moveTo(cx,0); ctx.lineTo(cx,canvas.height);
+  ctx.strokeStyle = "#ffb02066";
+  ctx.stroke();
+}
+
+// controls
+document.getElementById('slider').addEventListener('input', e=>{ cur = +e.target.value; render(); });
+document.getElementById('prevBtn').addEventListener('click', ()=>{ cur = Math.max(0,cur-1); render(); });
+document.getElementById('nextBtn').addEventListener('click', ()=>{ cur = Math.min(log.length-1,cur+1); render(); });
+document.getElementById('playBtn').addEventListener('click', ()=>{
+  playing = !playing;
+  document.getElementById('playBtn').textContent = playing ? '❚❚' : '▶';
+  if(playing){
+    playTimer = setInterval(()=>{
+      if(cur >= log.length-1){ cur = 0; } else { cur++; }
+      render();
+    }, 500);
+  } else {
+    clearInterval(playTimer);
+  }
+});
+document.getElementById('loadBtn').addEventListener('click', ()=>document.getElementById('fileInput').click());
+document.getElementById('fileInput').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => { ingest(JSON.parse(ev.target.result)); };
+  reader.readAsText(file);
+});
+
+ingest(log);
+</script>
+</body>
+</html>
