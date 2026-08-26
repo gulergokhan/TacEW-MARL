@@ -1,4 +1,6 @@
 import random
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,8 +16,10 @@ class DQN(nn.Module):
         self.network = nn.Sequential(
             nn.Linear(state_size, 64),
             nn.ReLU(),
+
             nn.Linear(64, 64),
             nn.ReLU(),
+
             nn.Linear(64, action_size)
         )
 
@@ -33,10 +37,10 @@ class DQNAgent:
         gamma=0.99,
         buffer_size=10000,
         batch_size=64,
-        epsilon = 1.0,
-        epsilon_min = 0.05,
-        epsilon_decay = 0.995,
-        target_update_freq = 100
+        epsilon=1.0,
+        epsilon_min=0.05,
+        epsilon_decay=0.995,
+        target_update_freq=500
     ):
 
         self.state_size = state_size
@@ -48,6 +52,7 @@ class DQNAgent:
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
+
         self.target_update_freq = target_update_freq
         self.learn_step_count = 0
 
@@ -77,8 +82,11 @@ class DQNAgent:
         )
 
     def select_action(self, state, training=True):
+
         if training and random.random() < self.epsilon:
-            return random.randrange(self.action_size)
+            return random.randrange(
+                self.action_size
+            )
 
         state = torch.tensor(
             state,
@@ -86,16 +94,20 @@ class DQNAgent:
         ).unsqueeze(0)
 
         with torch.no_grad():
-            q_values = self.model(state)
 
-        action = torch.argmax(
-            q_values,
-            dim=1
-        ).item()
+            q_values = self.model(
+                state
+            )
 
-        return action
+        return int(
+            torch.argmax(
+                q_values,
+                dim=1
+            ).item()
+        )
 
     def decay_epsilon(self):
+
         self.epsilon = max(
             self.epsilon_min,
             self.epsilon * self.epsilon_decay
@@ -129,10 +141,12 @@ class DQNAgent:
             rewards,
             next_states,
             dones
-        ) = self.memory.sample(self.batch_size)
+        ) = self.memory.sample(
+            self.batch_size
+        )
 
         states = torch.tensor(
-            states,
+            np.array(states),
             dtype=torch.float32
         )
 
@@ -147,7 +161,7 @@ class DQNAgent:
         )
 
         next_states = torch.tensor(
-            next_states,
+            np.array(next_states),
             dtype=torch.float32
         )
 
@@ -156,48 +170,51 @@ class DQNAgent:
             dtype=torch.float32
         )
 
-        # Current Q-values
-        current_q_values = self.model(states).gather(
-            1,
-            actions
-        ).squeeze(1)
-        # Double DQN:
-        # Online model en iyi aksiyonu seçer.
-        # Target model seçilen aksiyonun değerini hesaplar
-        # Next Q-values
-        with torch.no_grad():
-
-            next_actions = self.model(
-                next_states
-            ).argmax(dim=1,keepdim=True)
-            next_q_values = self.target_model(
-                next_states
-            ).gather(1, next_actions).squeeze(1)
-
-        # Q-learning target
-        target_q_values = rewards + (
-            self.gamma *
-            next_q_values *
-            (1 - dones)
+        current_q_values = (
+            self.model(states)
+            .gather(1, actions)
+            .squeeze(1)
         )
 
-        # Loss
+        with torch.no_grad():
+
+            next_actions = (
+                self.model(next_states)
+                .argmax(
+                    dim=1,
+                    keepdim=True
+                )
+            )
+
+            next_q_values = (
+                self.target_model(next_states)
+                .gather(
+                    1,
+                    next_actions
+                )
+                .squeeze(1)
+            )
+
+            target_q_values = (
+                rewards
+                + self.gamma
+                * next_q_values
+                * (1 - dones)
+            )
+
         loss = nn.SmoothL1Loss()(
             current_q_values,
             target_q_values
         )
 
-        # Backpropagation
         self.optimizer.zero_grad()
 
         loss.backward()
 
         nn.utils.clip_grad_norm_(
-        self.model.parameters(),
-        max_norm=10.0
+            self.model.parameters(),
+            max_norm=10.0
         )
-
-
 
         self.optimizer.step()
 
@@ -208,6 +225,7 @@ class DQNAgent:
             % self.target_update_freq
             == 0
         ):
+
             self.target_model.load_state_dict(
                 self.model.state_dict()
             )
