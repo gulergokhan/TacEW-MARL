@@ -1,29 +1,32 @@
+import unittest
+
 from terrain.models import TerrainType
 from terrain.terrain_map import TerrainMap
 
 
-def main():
-    terrain = TerrainMap(width=10, height=10)
+class TestTerrainMap(unittest.TestCase):
 
-    terrain.set_terrain(2, 3, TerrainType.MOUNTAIN)
-    terrain.set_terrain(5, 5, TerrainType.WATER)
-    terrain.set_terrain(7, 2, TerrainType.FOREST)
+    def setUp(self):
+        self.terrain = TerrainMap(width=10, height=10)
 
-    print("Terrain Map")
-    print("----------------")
+    def test_water_is_not_passable(self):
+        self.terrain.set_terrain(5, 5, TerrainType.WATER)
+        self.assertFalse(self.terrain.is_passable(5, 5))
 
-    print("(2, 3):", terrain.get_terrain(2, 3).name)
-    print("(5, 5):", terrain.get_terrain(5, 5).name)
-    print("(7, 2):", terrain.get_terrain(7, 2).name)
+    def test_mountain_blocks_line_of_sight(self):
+        self.terrain.set_terrain(3, 2, TerrainType.MOUNTAIN)
+        visible, attenuation = self.terrain.has_line_of_sight(2, 2, 4, 2)
 
-    print()
-    print("Passability")
-    print("----------------")
+        self.assertFalse(visible)
+        self.assertEqual(attenuation, 0.0)
 
-    print("(2, 3):", terrain.is_passable(2, 3))
-    print("(5, 5):", terrain.is_passable(5, 5))
-    print("(7, 2):", terrain.is_passable(7, 2))
+    def test_forest_attenuates_line_of_sight(self):
+        self.terrain.set_terrain(3, 2, TerrainType.FOREST)
+        visible, attenuation = self.terrain.has_line_of_sight(2, 2, 4, 2)
+
+        self.assertTrue(visible)
+        self.assertAlmostEqual(attenuation, 0.8)
 
 
 if __name__ == "__main__":
-    main()
+    unittest.main()

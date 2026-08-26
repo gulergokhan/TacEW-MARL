@@ -1,7 +1,10 @@
 __pycache__/
+.pytest_cache/
+.matplotlib_cache/
 *.pyc
 *.pyo
 *.pyd
+.DS_Store
 
 .venv/
 venv/
@@ -12,3 +15,5 @@ env/
 
 *.pt
 *.pth
+
+dashboard_logs/

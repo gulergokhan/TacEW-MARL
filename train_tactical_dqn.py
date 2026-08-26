@@ -1,3 +1,4 @@
+import json
 import random
 from copy import deepcopy
 from collections import deque
@@ -15,12 +16,24 @@ DEFAULT_SEED = 42
 EPISODES = 500
 PRINT_INTERVAL = 10
 
-ACTION_SIZE = 5
+ACTION_SIZE = TacticalEnv.NUM_ACTIONS
 
 MODEL_PATH = (
     Path(__file__).resolve().parent
     / "models"
     / "tactical_dqn.pth"
+)
+
+DASHBOARD_LOG_PATH = (
+    Path(__file__).resolve().parent
+    / "dashboard_logs"
+    / "tactical_episodes.json"
+)
+
+DASHBOARD_DATA_PATH = (
+    Path(__file__).resolve().parent
+    / "dashboard_logs"
+    / "tactical_episodes.js"
 )
 
 
@@ -47,6 +60,8 @@ def action_name(action):
         2: "LEFT",
         3: "RIGHT",
         4: "STAY",
+        5: "JAM_SUPPRESS",
+        6: "JAM_DECEIVE",
     }
 
     return names.get(action, "UNKNOWN")
@@ -57,20 +72,21 @@ def print_radar_status(env):
     print("    RADARS:")
 
     for radar in env.radar_system.radars:
+        for aircraft in (env.scout, env.hunter):
+            distance = env.radar_system.distance(
+                radar.position,
+                aircraft.state.position,
+            )
+            state = radar.state_for(aircraft.state.aircraft_id)
 
-        distance = env.radar_system.distance(
-            radar.position,
-            env.scout.state.position,
-        )
-
-        print(
-            f"      {radar.radar_id} | "
-            f"Pos=({radar.position.x},{radar.position.y}) | "
-            f"Distance={distance:.2f} | "
-            f"Range={radar.detection_range:.1f} | "
-            f"State={radar.state.value} | "
-            f"Active={radar.active}"
-        )
+            print(
+                f"      {radar.radar_id} | "
+                f"Target={aircraft.state.aircraft_type.value:6s} | "
+                f"Distance={distance:.2f} | "
+                f"Range={radar.detection_range:.1f} | "
+                f"State={state.value} | "
+                f"Active={radar.active}"
+            )
 
 
 def evaluate_greedy(agent, env, verbose=False):
@@ -129,6 +145,27 @@ def evaluate_greedy(agent, env, verbose=False):
             False
         ),
     }
+
+
+def save_dashboard_episodes(
+    episodes,
+    json_path=DASHBOARD_LOG_PATH,
+    data_path=DASHBOARD_DATA_PATH,
+):
+    json_path = Path(json_path)
+    data_path = Path(data_path)
+    payload = {"episodes": episodes}
+
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with json_path.open("w", encoding="utf-8") as file:
+        json.dump(payload, file, indent=2)
+
+    with data_path.open("w", encoding="utf-8") as file:
+        file.write("window.TACEW_EPISODES = ")
+        json.dump(payload, file)
+        file.write(";\n")
 
 
 def train(
@@ -212,6 +249,8 @@ def train(
     best_model_state = None
     best_score = float("-inf")
     best_episode = None
+    best_episode_log = None
+    training_episode_logs = []
 
     for episode in range(
         1,
@@ -271,6 +310,15 @@ def train(
             total_reward += reward
 
         agent.decay_epsilon()
+
+        training_episode_logs.append({
+            "label": f"Training Episode {episode}",
+            "episode": episode,
+            "reward": total_reward,
+            "detections": episode_detections,
+            "success": bool(info.get("goal_reached", False)),
+            "steps": deepcopy(env.episode_log),
+        })
 
         if episode_losses:
 
@@ -382,6 +430,7 @@ def train(
                 )
 
                 best_episode = episode
+                best_episode_log = deepcopy(env.episode_log)
 
             if verbose:
 
@@ -418,6 +467,14 @@ def train(
     history["best_evaluation_reward"] = (
         best_score
     )
+
+    history["dashboard_episodes"] = training_episode_logs
+
+    if best_episode_log:
+        history["dashboard_episodes"].append({
+            "label": f"Best evaluation (episode {best_episode})",
+            "steps": best_episode_log or [],
+        })
 
     return agent, history
 
@@ -494,6 +551,11 @@ def main():
         verbose=True
     )
 
+    history["dashboard_episodes"].append({
+        "label": "Final greedy evaluation",
+        "steps": deepcopy(env.episode_log),
+    })
+
     print()
 
     print(
@@ -526,11 +588,20 @@ def main():
         MODEL_PATH
     )
 
+    save_dashboard_episodes(
+        history["dashboard_episodes"]
+    )
+
     print()
 
     print(
         "Model saved to:",
         MODEL_PATH
+    )
+
+    print(
+        "Dashboard logs saved to:",
+        DASHBOARD_LOG_PATH,
     )
 
 

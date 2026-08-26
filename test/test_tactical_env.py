@@ -1,36 +1,90 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
 from environment.tactical_env import TacticalEnv
+from weather.models import WeatherState
 
 
-def main():
-    env = TacticalEnv(
-        width=10,
-        height=10,
-        latitude=39.9334,
-        longitude=32.8597,
+def clear_weather():
+    return WeatherState(
+        temperature=20.0,
+        wind_speed=0.0,
+        wind_direction=0.0,
+        visibility=10000.0,
+        precipitation=0.0,
+        cloud_cover=0.0,
     )
 
-    observation = env.reset()
 
-    print("Initial Observation")
-    print("----------------------")
-    print(observation)
-    print("Shape:", observation.shape)
-    print("Data type:", observation.dtype)
+class TestTacticalEnv(unittest.TestCase):
 
-    print()
+    def setUp(self):
+        self.env = TacticalEnv(weather=clear_weather())
+        self.observation = self.env.reset()
 
-    print("Scout moves RIGHT")
-    print("----------------------")
+    def test_reset_returns_expected_observation_and_action_sizes(self):
+        self.assertEqual(len(self.observation), 84)
+        self.assertEqual(self.env.NUM_ACTIONS, 7)
 
-    next_observation, reward, done, info = env.step(
-        TacticalEnv.ACTION_RIGHT
-    )
+    def test_hunter_heuristic_moves_toward_strike_point(self):
+        self.env.step(self.env.ACTION_STAY)
 
-    print("Next Observation:", next_observation)
-    print("Shape:", next_observation.shape)
-    print("Reward:", reward)
-    print("Done:", done)
+        self.assertEqual(
+            (
+                self.env.hunter.state.position.x,
+                self.env.hunter.state.position.y,
+            ),
+            (7, 8),
+        )
+
+    def test_suppression_jam_targets_nearest_radar(self):
+        self.env.scout.move(4, 5)
+
+        _, _, _, info = self.env.step(self.env.ACTION_JAM_SUPPRESS)
+        radar = self.env.radar_system.get_radar("radar_01")
+
+        self.assertGreater(radar.suppression_jam, 0.0)
+        self.assertGreater(radar.suppression_timer, 0)
+        self.assertEqual(info["action"], "JAM_SUPPRESS")
+
+    def test_episode_log_can_be_exported(self):
+        self.env.step(self.env.ACTION_RIGHT)
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "episode.json"
+            self.env.export_log(output)
+            data = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["step"], 1)
+        self.assertIn("terrain_grid", data[0])
+
+    def test_dashboard_status_contains_scout_and_hunter_tracks(self):
+        self.env.hunter.move(3, 8)
+
+        with patch("radar.radar.random.random", return_value=0.0):
+            _, _, _, info = self.env.step(self.env.ACTION_STAY)
+
+        radar_02_status = [
+            status
+            for status in info["radar_status"]
+            if status["radar_id"] == "radar_02"
+        ]
+
+        self.assertEqual(
+            {status["target_id"] for status in radar_02_status},
+            {"scout_01", "hunter_01"},
+        )
+        hunter_status = next(
+            status
+            for status in radar_02_status
+            if status["target_id"] == "hunter_01"
+        )
+        self.assertEqual(hunter_status["state"], "LOCK")
 
 
 if __name__ == "__main__":
-    main()
+    unittest.main()

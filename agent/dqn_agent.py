@@ -1,4 +1,6 @@
 import random
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -33,10 +35,10 @@ class DQNAgent:
         gamma=0.99,
         buffer_size=10000,
         batch_size=64,
-        epsilon = 1.0,
-        epsilon_min = 0.05,
-        epsilon_decay = 0.995,
-        target_update_freq = 100
+        epsilon=1.0,
+        epsilon_min=0.05,
+        epsilon_decay=0.995,
+        target_update_freq=100
     ):
 
         self.state_size = state_size
@@ -132,7 +134,7 @@ class DQNAgent:
         ) = self.memory.sample(self.batch_size)
 
         states = torch.tensor(
-            states,
+            np.asarray(states),
             dtype=torch.float32
         )
 
@@ -147,7 +149,7 @@ class DQNAgent:
         )
 
         next_states = torch.tensor(
-            next_states,
+            np.asarray(next_states),
             dtype=torch.float32
         )
 
@@ -169,7 +171,7 @@ class DQNAgent:
 
             next_actions = self.model(
                 next_states
-            ).argmax(dim=1,keepdim=True)
+            ).argmax(dim=1, keepdim=True)
             next_q_values = self.target_model(
                 next_states
             ).gather(1, next_actions).squeeze(1)
@@ -193,11 +195,9 @@ class DQNAgent:
         loss.backward()
 
         nn.utils.clip_grad_norm_(
-        self.model.parameters(),
-        max_norm=10.0
+            self.model.parameters(),
+            max_norm=10.0
         )
-
-
 
         self.optimizer.step()
 

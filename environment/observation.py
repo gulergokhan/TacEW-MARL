@@ -110,6 +110,7 @@ class ObservationEncoder:
 
         scout_x = scout["x"]
         scout_y = scout["y"]
+        scout_id = scout.get("aircraft_id", "scout_01")
 
         for dy in (-1, 0, 1):
             for dx in (-1, 0, 1):
@@ -169,7 +170,7 @@ class ObservationEncoder:
                 # Radar state one-hot
                 observation.extend(
                     self._radar_state_one_hot(
-                        radar.state
+                        radar.state_for(scout_id)
                     )
                 )
 

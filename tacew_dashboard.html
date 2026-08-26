@@ -100,6 +100,11 @@
   .banner.win{background:#0f2b1a; color:var(--scope); border:1px solid var(--scope-dim);}
   .banner.loss{background:#2b0f0f; color:var(--red); border:1px solid #5a1f1f;}
   #fileInput{display:none;}
+  #episodeSelect{
+    max-width:260px; background:var(--panel); color:var(--text);
+    border:1px solid var(--line); border-radius:5px; padding:7px 9px;
+    font-family:inherit; font-size:11px;
+  }
   ::-webkit-scrollbar{width:8px;} ::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}
 </style>
 </head>
@@ -109,7 +114,8 @@
   <h1>TacEW-MARL</h1>
   <span class="tag">Sortie Dashboard</span>
   <span class="sub" id="metaLine">— sortie kaydı yükleniyor —</span>
-  <button id="loadBtn">JSON YÜKLE (episode_log.json)</button>
+  <select id="episodeSelect" title="Gösterilecek episode"></select>
+  <button id="loadBtn">JSON YÜKLE (tactical_episodes.json)</button>
   <input type="file" id="fileInput" accept=".json">
 </header>
 
@@ -152,7 +158,7 @@
     <div class="panel">
       <h2>Radar Durumu (J/S Oranı)</h2>
       <table id="radarTable">
-        <thead><tr><th>Radar</th><th>Durum</th><th>Mesafe</th><th>J/S</th></tr></thead>
+        <thead><tr><th>Radar</th><th>Hedef</th><th>Durum</th><th>Mesafe</th><th>J/S</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -164,18 +170,25 @@
   </div>
 </main>
 
+<script src="dashboard_logs/tactical_episodes.js"></script>
 <script>
 const TERRAIN_COLORS = ["#274a3a","#5b4636","#1c3a52","#4a4a2c","#2c4a2e"];
 const STATE_COLOR = {SAFE:"#35e28a", TRACK:"#ffb020", LOCK:"#ff8a3d", LETHAL:"#ff4d4d"};
+const STATE_PRIORITY = {SAFE:0, TRACK:1, LOCK:2, LETHAL:3};
 
 let log = [{"step": 1, "scout": {"x": 1, "y": 2, "fuel": 99.0}, "hunter": {"x": 7, "y": 8, "fuel": 99.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 5.0, "js_ratio": 0.60776, "visible": true, "state": "SAFE", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 5.0990195135927845, "js_ratio": 0.5843846153846154, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 6.082762530298219, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": 0.6299504793187782, "action": "DOWN", "hunter_action": null, "lethal_hit": false, "goal_reached": false, "terrain_grid": [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0, 1, 0, 0, 0], [2, 2, 0, 0, 0, 0, 1, 0, 0, 0], [2, 0, 0, 4, 4, 0, 0, 0, 0, 0], [0, 0, 0, 4, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], "radars": [{"radar_id": "radar_01", "x": 5, "y": 5}, {"radar_id": "radar_02", "x": 2, "y": 7}, {"radar_id": "radar_03", "x": 7, "y": 3}], "strike_point": {"x": 1, "y": 8}}, {"step": 2, "scout": {"x": 2, "y": 2, "fuel": 98.0}, "hunter": {"x": 6, "y": 8, "fuel": 98.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 4.242640687119285, "js_ratio": 0.8441111111111111, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 5.0, "js_ratio": 0.60776, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 5.0990195135927845, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.3157369169456825, "action": "RIGHT", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 3, "scout": {"x": 2, "y": 2, "fuel": 96.5}, "hunter": {"x": 5, "y": 8, "fuel": 97.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 4.242640687119285, "js_ratio": 0.8441111111111111, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 5.0, "js_ratio": 0.60776, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 5.0990195135927845, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -1.55, "action": "JAM_SUPPRESS", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 4, "scout": {"x": 2, "y": 3, "fuel": 95.5}, "hunter": {"x": 4, "y": 8, "fuel": 96.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 3.605551275463989, "js_ratio": 1.1687692307692308, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 4.0, "js_ratio": 0.9496249999999998, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 5.0, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.3749683016680845, "action": "DOWN", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 5, "scout": {"x": 2, "y": 3, "fuel": 94.0}, "hunter": {"x": 3, "y": 8, "fuel": 95.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 3.605551275463989, "js_ratio": 1.1687692307692308, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 4.0, "js_ratio": 0.9496249999999998, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 5.0, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -1.55, "action": "JAM_SUPPRESS", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 6, "scout": {"x": 3, "y": 3, "fuel": 93.0}, "hunter": {"x": 2, "y": 8, "fuel": 94.0, "strike_point": {"x": 1, "y": 8}, "target_reached": false}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 2.8284271247461903, "js_ratio": 1.8992499999999992, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 4.123105625617661, "js_ratio": 0.8937647058823528, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 4.0, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.3108181359588216, "action": "RIGHT", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 7, "scout": {"x": 3, "y": 3, "fuel": 91.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 2.8284271247461903, "js_ratio": 1.8992499999999992, "visible": true, "state": "SAFE", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": true}, {"radar_id": "radar_02", "distance": 4.123105625617661, "js_ratio": 0.8937647058823528, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 4.0, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": 0.15000000000000002, "action": "JAM_DECEIVE", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 8, "scout": {"x": 3, "y": 4, "fuel": 90.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 2.23606797749979, "js_ratio": 3.0387999999999993, "visible": true, "state": "TRACK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": true}, {"radar_id": "radar_02", "distance": 3.1622776601683795, "js_ratio": 1.5193999999999996, "visible": true, "state": "TRACK", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 4.123105625617661, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -1.382056425567373, "action": "DOWN", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 9, "scout": {"x": 4, "y": 4, "fuel": 89.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 1.4142135623730951, "js_ratio": 7.596999999999997, "visible": true, "state": "SAFE", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": true}, {"radar_id": "radar_02", "distance": 3.605551275463989, "js_ratio": 0.9350153846153847, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 3.1622776601683795, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": 0.6962699879404679, "action": "RIGHT", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 10, "scout": {"x": 4, "y": 5, "fuel": 88.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 1.0, "js_ratio": 15.193999999999997, "visible": true, "state": "SAFE", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": true}, {"radar_id": "radar_02", "distance": 2.8284271247461903, "js_ratio": 1.5193999999999996, "visible": true, "state": "TRACK", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 3.605551275463989, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.39314575050761946, "action": "DOWN", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 11, "scout": {"x": 5, "y": 5, "fuel": 87.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 0.1, "js_ratio": 1519.3999999999996, "visible": true, "state": "LOCK", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 3.605551275463989, "js_ratio": 0.7480123076923079, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 2.8284271247461903, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -0.2926406871192848, "action": "RIGHT", "hunter_action": null, "lethal_hit": false, "goal_reached": false}, {"step": 12, "scout": {"x": 5, "y": 6, "fuel": 86.5}, "hunter": {"x": 1, "y": 8, "fuel": 93.0, "strike_point": {"x": 1, "y": 8}, "target_reached": true}, "goal": {"x": 8, "y": 8}, "radar_status": [{"radar_id": "radar_01", "distance": 1.0, "js_ratio": 15.193999999999997, "visible": true, "state": "LETHAL", "active": true, "detection_range": 3.0, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_02", "distance": 3.1622776601683795, "js_ratio": 0.9724159999999998, "visible": true, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}, {"radar_id": "radar_03", "distance": 3.605551275463989, "js_ratio": 0.0, "visible": false, "state": "SAFE", "active": true, "detection_range": 2.5, "suppression_jam": 0.0, "deception_jam": false}], "weather": {"temperature": 8.0, "wind_speed": 22.0, "wind_direction": 270.0, "visibility": 9000.0, "precipitation": 18.0, "cloud_cover": 75.0}, "reward": -50.4129105883447, "action": "DOWN", "hunter_action": null, "lethal_hit": true, "goal_reached": false}]
 ;
+let episodes = [];
 let terrainGrid = null, radars = [], strikePoint = null, goal = null;
 let gridW = 10, gridH = 10;
 let cur = 0, playing = false, playTimer = null;
 
-function ingest(newLog){
-  log = newLog;
+function selectEpisode(index){
+  const episode = episodes[index];
+  if(!episode || !Array.isArray(episode.steps) || episode.steps.length === 0) return;
+
+  log = episode.steps;
+  terrainGrid = null; radars = []; strikePoint = null; goal = null;
   const first = log.find(e => e.terrain_grid);
   if(first){
     terrainGrid = first.terrain_grid;
@@ -187,8 +200,32 @@ function ingest(newLog){
   cur = 0;
   document.getElementById('slider').max = log.length - 1;
   document.getElementById('metaLine').textContent =
-    `— ${log.length} adım — sonuç: ${outcomeText()}`;
+    `— ${episode.label} — ${log.length} adım — sonuç: ${outcomeText()}`;
   render();
+}
+
+function ingest(payload){
+  const candidates = Array.isArray(payload)
+    ? [{label: "Episode 1", steps: payload}]
+    : (payload.episodes || []);
+
+  episodes = candidates
+    .map((episode, index) => ({
+      label: episode.label || `Episode ${index + 1}`,
+      steps: episode.steps || episode.log || [],
+    }))
+    .filter(episode => Array.isArray(episode.steps) && episode.steps.length > 0);
+
+  if(episodes.length === 0){
+    alert("JSON içinde gösterilebilir episode bulunamadı.");
+    return;
+  }
+
+  const select = document.getElementById('episodeSelect');
+  select.innerHTML = episodes
+    .map((episode, index) => `<option value="${index}">${episode.label}</option>`)
+    .join('');
+  selectEpisode(0);
 }
 
 function outcomeText(){
@@ -247,7 +284,10 @@ function drawMap(entry){
 
   // radars: position + detection range ring + state color
   radars.forEach(r=>{
-    const rs = (entry.radar_status || []).find(s=>s.radar_id===r.radar_id);
+    const targetStates = (entry.radar_status || [])
+      .filter(s=>s.radar_id===r.radar_id)
+      .sort((a,b)=>(STATE_PRIORITY[b.state]||0)-(STATE_PRIORITY[a.state]||0));
+    const rs = targetStates[0];
     const color = rs ? (STATE_COLOR[rs.state] || "#ffb020") : "#ffb020";
     const cx = (r.x+0.5)*cs, cy=(r.y+0.5)*cs;
     ctx.beginPath();
@@ -310,9 +350,11 @@ function drawRadarTable(entry){
   tbody.innerHTML = '';
   (entry.radar_status||[]).forEach(r=>{
     const tr = document.createElement('tr');
+    const targetName = r.target_id?.startsWith('hunter') ? 'Hunter' : 'Scout';
     const jamTag = r.suppression_jam>0 ? '<span class="jam-tag">SUPPRESS</span>'
                  : r.deception_jam ? '<span class="jam-tag">DECEIVE</span>' : '';
     tr.innerHTML = `<td>${r.radar_id}${jamTag}</td>
+      <td>${targetName}</td>
       <td><span class="state-pill state-${r.state}">${r.state}</span></td>
       <td>${r.distance.toFixed(2)}</td>
       <td>${r.js_ratio.toFixed(2)}</td>`;
@@ -361,6 +403,7 @@ function drawRewardChart(){
 
 // controls
 document.getElementById('slider').addEventListener('input', e=>{ cur = +e.target.value; render(); });
+document.getElementById('episodeSelect').addEventListener('change', e=>selectEpisode(+e.target.value));
 document.getElementById('prevBtn').addEventListener('click', ()=>{ cur = Math.max(0,cur-1); render(); });
 document.getElementById('nextBtn').addEventListener('click', ()=>{ cur = Math.min(log.length-1,cur+1); render(); });
 document.getElementById('playBtn').addEventListener('click', ()=>{
@@ -384,7 +427,7 @@ document.getElementById('fileInput').addEventListener('change', e=>{
   reader.readAsText(file);
 });
 
-ingest(log);
+ingest(window.TACEW_EPISODES || log);
 </script>
 </body>
 </html>
