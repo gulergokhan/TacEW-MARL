@@ -12,9 +12,27 @@ from environment.tactical_env import TacticalEnv
 
 DEFAULT_SEED = 42
 
-EPISODES = 500
+EPISODES = 1000
 PRINT_INTERVAL = 10
-
+CHECKPOINT_ROLLOUTS = 5
+TRAINING_START_SCENARIOS = [
+    (
+        (7, 7),
+        (8, 8),
+    ),
+    (
+        (7, 8),
+        (8, 8),
+    ),
+    (
+        (6, 7),
+        (8, 8),
+    ),
+    (
+        (8, 5),
+        (8, 6),
+    ),
+]
 ACTION_SIZE = TacticalEnv.NUM_ACTIONS
 
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "tactical_dqn.pth"
@@ -133,6 +151,89 @@ def evaluate_greedy(agent, env, verbose=False):
         "mission_success": info.get("mission_success", False),
     }
 
+def evaluate_training_scenarios(agent, env):
+
+    random_state = random.getstate()
+
+    evaluations = []
+    episode_logs = []
+
+    try:
+        for (
+            scenario_index,
+            (
+                scout_start,
+                hunter_start,
+            ),
+        ) in enumerate(
+            TRAINING_START_SCENARIOS
+        ):
+            for rollout in range(
+                CHECKPOINT_ROLLOUTS
+            ):
+                random.seed(
+                    9000
+                    + scenario_index * 100
+                    + rollout
+                )
+
+                env.scout_start_position = (
+                    scout_start
+                )
+                env.hunter_start_position = (
+                    hunter_start
+                )
+
+                result = evaluate_greedy(
+                    agent,
+                    env,
+                    verbose=False,
+                )
+
+                evaluations.append(result)
+                episode_logs.append(
+                    deepcopy(env.episode_log)
+                )
+
+    finally:
+        random.setstate(random_state)
+
+    worst_index = min(
+        range(len(evaluations)),
+        key=lambda index: evaluations[index]["reward"],
+    )
+
+    successful_rollouts = sum(
+        result["mission_success"]
+        for result in evaluations
+    )
+
+    return {
+        "reward": sum(
+            result["reward"]
+            for result in evaluations
+        ) / len(evaluations),
+        "detections": sum(
+            result["detections"]
+            for result in evaluations
+        ) / len(evaluations),
+        "steps": sum(
+            result["steps"]
+            for result in evaluations
+        ) / len(evaluations),
+        "mission_success": (
+            successful_rollouts
+            == len(evaluations)
+        ),
+        "success_rate": (
+            successful_rollouts
+            / len(evaluations)
+        ),
+        "worst_episode_log": (
+            episode_logs[worst_index]
+        ),
+    }
+
 
 def save_dashboard_episodes(
     episodes,
@@ -208,6 +309,7 @@ def train(seed=DEFAULT_SEED, verbose=True):
         "epsilon": [],
         "loss": [],
         "mission_success": [],
+        "scenario_success_rate": [],
     }
 
     best_model_state = None
@@ -217,6 +319,21 @@ def train(seed=DEFAULT_SEED, verbose=True):
     training_episode_logs = []
 
     for episode in range(1, EPISODES + 1):
+
+        (
+            scout_start,
+            hunter_start,
+        ) = random.choice(
+            TRAINING_START_SCENARIOS
+        )
+
+        env.scout_start_position = (
+            scout_start
+        )
+
+        env.hunter_start_position = (
+            hunter_start
+        )
 
         state = env.reset()
 
@@ -284,13 +401,15 @@ def train(seed=DEFAULT_SEED, verbose=True):
 
             average_detections = sum(detection_window) / len(detection_window)
 
-            evaluation = evaluate_greedy(agent, env, verbose=False)
+            evaluation = evaluate_training_scenarios(agent, env,)
 
             evaluation_reward = evaluation["reward"]
 
             evaluation_detections = evaluation["detections"]
 
             mission_success = evaluation["mission_success"]
+
+            scenario_success_rate = evaluation["success_rate"]
 
             history["episode"].append(episode)
 
@@ -306,7 +425,12 @@ def train(seed=DEFAULT_SEED, verbose=True):
 
             history["mission_success"].append(mission_success)
 
-            mission_bonus = 100.0 if mission_success else 0.0
+            history["scenario_success_rate"].append(
+                scenario_success_rate
+            )
+
+
+            mission_bonus = 100.0 * scenario_success_rate
 
             score = evaluation_reward + mission_bonus - (evaluation_detections * 2.0)
 
@@ -317,7 +441,7 @@ def train(seed=DEFAULT_SEED, verbose=True):
                 best_model_state = deepcopy(agent.model.state_dict())
 
                 best_episode = episode
-                best_episode_log = deepcopy(env.episode_log)
+                best_episode_log = deepcopy(evaluation["worst_episode_log"])
 
             if verbose:
 
@@ -328,9 +452,9 @@ def train(seed=DEFAULT_SEED, verbose=True):
                     f"Eval Reward: "
                     f"{evaluation_reward:8.2f} | "
                     f"Detections: "
-                    f"{evaluation_detections:3d} | "
-                    f"Mission: "
-                    f"{str(mission_success):5s} | "
+                    f"{evaluation_detections:5.1f} | "
+                    f"Scenario Success: "
+                    f"{scenario_success_rate:6.2%} | "
                     f"Loss: "
                     f"{average_loss:.5f} | "
                     f"Epsilon: "

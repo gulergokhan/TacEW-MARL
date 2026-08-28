@@ -21,6 +21,31 @@ def clear_weather():
 
 class TestTacticalEnv(unittest.TestCase):
 
+    def test_custom_escort_start_positions(self):
+        env = TacticalEnv(
+            weather=clear_weather(),
+            scout_start_position=(5, 6),
+            hunter_start_position=(6, 6),
+        )
+
+        env.reset()
+
+        self.assertEqual(
+            (
+                env.scout.state.position.x,
+                env.scout.state.position.y,
+            ),
+            (5, 6),
+        )
+
+        self.assertEqual(
+            (
+                env.hunter.state.position.x,
+                env.hunter.state.position.y,
+            ),
+            (6, 6),
+        )
+
     def setUp(self):
         self.env = TacticalEnv(weather=clear_weather())
         self.observation = self.env.reset()
@@ -38,6 +63,25 @@ class TestTacticalEnv(unittest.TestCase):
                 self.env.hunter.state.position.y,
             ),
             (7, 8),
+        )
+    def test_hunter_avoids_active_radar_cell(self):
+        self.env.hunter.move(2, 6)
+
+        self.env._hunter_heuristic_move()
+
+        hunter_position = (
+            self.env.hunter.state.position.x,
+            self.env.hunter.state.position.y,
+        )
+
+        self.assertEqual(
+            hunter_position,
+            (1, 6),
+        )
+
+        self.assertNotEqual(
+            hunter_position,
+            (2, 7),
         )
 
     def test_suppression_jam_targets_nearest_radar(self):

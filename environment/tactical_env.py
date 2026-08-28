@@ -40,12 +40,24 @@ class TacticalEnv:
         longitude: float = 32.8597,
         weather: WeatherState | None = None,
         weather_client: WeatherClient | None = None,
+        scout_start_position: tuple[int, int] | None = None,
+        hunter_start_position: tuple[int, int] | None = None,
     ):
         self.width = width
         self.height = height
 
         self.latitude = latitude
         self.longitude = longitude
+
+        self.scout_start_position = (
+            scout_start_position
+            or cfg.TACTICAL_SCOUT_START_POSITION
+        )
+
+        self.hunter_start_position = (
+            hunter_start_position
+            or cfg.TACTICAL_HUNTER_START_POSITION
+        )
 
         self.max_steps = 100
 
@@ -151,15 +163,15 @@ class TacticalEnv:
         self.scout = Aircraft(
             aircraft_id="scout_01",
             aircraft_type=AircraftType.SCOUT,
-            start_x=cfg.TACTICAL_SCOUT_START_POSITION[0],
-            start_y=cfg.TACTICAL_SCOUT_START_POSITION[1],
+            start_x=self.scout_start_position[0],
+            start_y=self.scout_start_position[1],
         )
 
         self.hunter = Aircraft(
             aircraft_id="hunter_01",
             aircraft_type=AircraftType.HUNTER,
-            start_x=cfg.TACTICAL_HUNTER_START_POSITION[0],
-            start_y=cfg.TACTICAL_HUNTER_START_POSITION[1],
+            start_x=self.hunter_start_position[0],
+            start_y=self.hunter_start_position[1],
         )
 
         self.radar_system.reset()
@@ -504,6 +516,14 @@ class TacticalEnv:
             (hx - 1, hy),
             (hx + 1, hy),
         ]
+        radar_cells = {
+            (
+                radar.position.x,
+                radar.position.y,
+            )
+            for radar in self.radar_system.radars
+            if radar.active
+        }
 
         current_distance = self._dist(
             hx,
@@ -521,6 +541,8 @@ class TacticalEnv:
                 continue
 
             if not self.terrain.is_passable(cx, cy):
+                continue
+            if(cx, cy) in radar_cells:
                 continue
 
             d = self._dist(cx, cy, self.strike_point.x, self.strike_point.y)
