@@ -27,7 +27,7 @@ class TerrainMap:
         return TerrainType(self.grid[y, x])
 
     def is_passable(self, x: int, y: int) -> bool:
-        return self.get_terrain(x, y) != TerrainType.WATER
+        return True
 
     # ==================================================
     # LINE OF SIGHT / RADAR SHADOWING

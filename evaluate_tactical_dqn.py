@@ -74,9 +74,9 @@ def evaluate(
             action = agent.select_action(observation, training=False)
             observation, reward, done, info = env.step(action)
             total_reward += reward
-            episode_detections += len(info.get("radar_detections", []))
+            episode_detections += len(info.get("radar_detections", [],)+info.get("hunter_radar_detections",[],))
 
-        success = bool(info.get("goal_reached", False))
+        success = bool(info.get("mission_success", False))
         rewards.append(total_reward)
         successes += int(success)
         detections += episode_detections

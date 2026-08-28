@@ -111,6 +111,12 @@ class ObservationEncoder:
         scout_x = scout["x"]
         scout_y = scout["y"]
         scout_id = scout.get("aircraft_id", "scout_01")
+        hunter_x = hunter["x"]
+        hunter_y = hunter["y"]
+        hunter_id = hunter.get(
+            "aircraft_id",
+            "hunter_01",
+        )
 
         for dy in (-1, 0, 1):
             for dx in (-1, 0, 1):
@@ -197,6 +203,37 @@ class ObservationEncoder:
                         ),
                     )
                 )
+                # Hunter radar state
+                observation.extend(
+                    self._radar_state_one_hot(
+                        radar.state_for(hunter_id)
+                    )
+                )
+
+                # Distance from Hunter to radar
+                hunter_distance = np.sqrt(
+                    (
+                        hunter_x
+                        - radar.position.x
+                    ) ** 2
+                    +
+                    (
+                        hunter_y
+                        - radar.position.y
+                    ) ** 2
+                )
+
+                observation.append(
+                    self._normalize(
+                        hunter_distance,
+                        0.0,
+                        np.sqrt(
+                            self.width ** 2
+                            + self.height ** 2
+                        ),
+                    )
+                )
+
 
         return np.array(
             observation,

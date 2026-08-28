@@ -49,11 +49,6 @@ class TacticalEnv:
 
         self.max_steps = 100
 
-        self.goal_position = Position(
-            x=8,
-            y=8,
-        )
-
         self.strike_point = Position(
             x=cfg.STRIKE_POINT[0],
             y=cfg.STRIKE_POINT[1],
@@ -100,10 +95,6 @@ class TacticalEnv:
 
         self.current_step = 0
 
-        # Best distance seen in the episode prevents reward farming by moving
-        # away from the goal and then returning to an already visited point.
-        self.best_distance_to_goal = None
-
         # Per-step trace used to feed the dashboard. Populated on reset()/step().
         self.episode_log = []
 
@@ -116,10 +107,10 @@ class TacticalEnv:
         for y in (3, 4, 5):
             self.terrain.set_terrain(6, y, TerrainType.MOUNTAIN)
 
-        for (x, y) in [(3, 6), (4, 6), (3, 7)]:
+        for x, y in [(3, 6), (4, 6), (3, 7)]:
             self.terrain.set_terrain(x, y, TerrainType.FOREST)
 
-        for (x, y) in [(0, 5), (1, 5), (0, 6)]:
+        for x, y in [(0, 5), (1, 5), (0, 6)]:
             self.terrain.set_terrain(x, y, TerrainType.WATER)
 
     def _load_weather(self):
@@ -155,27 +146,23 @@ class TacticalEnv:
 
         self.current_step = 0
         self.episode_log = []
+        self.hunter_target_reached = False
 
         self.scout = Aircraft(
             aircraft_id="scout_01",
             aircraft_type=AircraftType.SCOUT,
-            start_x=1,
-            start_y=1,
+            start_x=cfg.TACTICAL_SCOUT_START_POSITION[0],
+            start_y=cfg.TACTICAL_SCOUT_START_POSITION[1],
         )
 
         self.hunter = Aircraft(
             aircraft_id="hunter_01",
             aircraft_type=AircraftType.HUNTER,
-            start_x=8,
-            start_y=8,
+            start_x=cfg.TACTICAL_HUNTER_START_POSITION[0],
+            start_y=cfg.TACTICAL_HUNTER_START_POSITION[1],
         )
 
         self.radar_system.reset()
-
-        self.best_distance_to_goal = self._distance_to_goal(
-            self.scout.state.position.x,
-            self.scout.state.position.y,
-        )
 
         state = self._get_state()
 
@@ -207,6 +194,29 @@ class TacticalEnv:
 
         hunter_info = self._apply_hunter_action(hunter_action)
 
+        escort_distance = self._dist(
+            self.scout.state.position.x,
+            self.scout.state.position.y,
+            self.hunter.state.position.x,
+            self.hunter.state.position.y,
+        )
+
+        escort_in_range = (
+            escort_distance
+            <= cfg.ESCORT_RADIUS
+        )
+
+        if escort_in_range:
+            reward += cfg.ESCORT_REWARD
+        else:
+            reward -= (
+                escort_distance
+                - cfg.ESCORT_RADIUS
+            ) * cfg.ESCORT_DISTANCE_PENALTY
+
+        scout_info["escort_distance"] = escort_distance
+        scout_info["escort_in_range"] = escort_in_range
+
         scout_detections = self.radar_system.detect(
             self.scout.state.position,
             weather=self._weather_dict(),
@@ -221,20 +231,68 @@ class TacticalEnv:
         )
 
         scout_lethal_hit = any(
-            detection["state"].value == "LETHAL"
-            for detection in scout_detections
+            detection["state"].value == "LETHAL" for detection in scout_detections
         )
         hunter_lethal_hit = any(
-            detection["state"].value == "LETHAL"
-            for detection in hunter_detections
+            detection["state"].value == "LETHAL" for detection in hunter_detections
         )
 
         if scout_detections:
-            reward -= float(len(scout_detections))
+            reward -= float(len(scout_detections)*cfg.SCOUT_DETECTION_PENALTY)
 
-        if scout_lethal_hit:
-            reward += cfg.LETHAL_PENALTY
+        if hunter_detections:
+            reward -= float(len(hunter_detections)*cfg.HUNTER_DETECTION_PENALTY)
+
+        if hunter_info["target_reached_this_step"] and not hunter_lethal_hit:
+            reward += cfg.HUNTER_GOAL_REWARD
+
+        radar_failure = scout_lethal_hit or hunter_lethal_hit
+
+        fuel_exhausted = self.scout.state.fuel <= 0 or self.hunter.state.fuel <= 0
+
+        time_limit_reached = self.current_step >= self.max_steps
+
+        mission_success = (
+            self.hunter_target_reached and escort_in_range and not radar_failure
+        )
+
+        done = False
+        termination_reason = None
+
+        if radar_failure:
+
+            if scout_lethal_hit:
+                reward += cfg.LETHAL_PENALTY
+
+            if hunter_lethal_hit:
+                reward += cfg.HUNTER_LETHAL_PENALTY
+
             done = True
+
+            if scout_lethal_hit and hunter_lethal_hit:
+                termination_reason = "both_lethal"
+            elif scout_lethal_hit:
+                termination_reason = "scout_lethal"
+            else:
+                termination_reason = "hunter_lethal"
+
+        elif mission_success:
+
+            reward += cfg.MISSION_SUCCESS_REWARD
+            done = True
+            termination_reason = "mission_success"
+
+        elif fuel_exhausted:
+
+            done = True
+            termination_reason = "fuel_exhausted"
+
+        elif time_limit_reached:
+
+            done = True
+            termination_reason = "time_limit"
+
+        mission_failed = done and not mission_success
 
         radar_status = self.radar_system.get_status(
             self.scout.state.position,
@@ -242,6 +300,7 @@ class TacticalEnv:
             terrain=self.terrain,
             target_id=self.scout.state.aircraft_id,
         )
+
         radar_status.extend(
             self.radar_system.get_status(
                 self.hunter.state.position,
@@ -251,26 +310,26 @@ class TacticalEnv:
             )
         )
 
-        scout_info.update({
-            "radar_detections": [
-                {**detection, "state": detection["state"].value}
-                for detection in scout_detections
-            ],
-            "hunter_radar_detections": [
-                {**detection, "state": detection["state"].value}
-                for detection in hunter_detections
-            ],
-            "radar_status": radar_status,
-            "lethal_hit": scout_lethal_hit,
-            "hunter_lethal_hit": hunter_lethal_hit,
-        })
+        scout_info.update(
+            {
+                "radar_detections": [
+                    {**detection, "state": detection["state"].value}
+                    for detection in scout_detections
+                ],
+                "hunter_radar_detections": [
+                    {**detection, "state": detection["state"].value}
+                    for detection in hunter_detections
+                ],
+                "radar_status": radar_status,
+                "lethal_hit": scout_lethal_hit,
+                "hunter_lethal_hit": hunter_lethal_hit,
+                "mission_success": mission_success,
+                "mission_failed": mission_failed,
+                "termination_reason": termination_reason,
+            }
+        )
+
         hunter_info["lethal_hit"] = hunter_lethal_hit
-
-        if self.scout.state.fuel <= 0:
-            done = True
-
-        if self.current_step >= self.max_steps:
-            done = True
 
         state = self._get_state()
 
@@ -303,11 +362,6 @@ class TacticalEnv:
 
         old_x = self.scout.state.position.x
         old_y = self.scout.state.position.y
-
-        old_distance = self._distance_to_goal(
-            old_x,
-            old_y,
-        )
 
         reward = -0.05
         done = False
@@ -382,27 +436,6 @@ class TacticalEnv:
         new_x = self.scout.state.position.x
         new_y = self.scout.state.position.y
 
-        new_distance = self._distance_to_goal(new_x, new_y)
-
-        # Reward only progress beyond the best distance reached so far.
-        progress = max(0.0, self.best_distance_to_goal - new_distance)
-
-        if new_distance < self.best_distance_to_goal:
-            self.best_distance_to_goal = new_distance
-
-        distance_improvement = old_distance - new_distance
-
-        reward += progress * 1.5
-
-        goal_reached = (
-            new_x == self.goal_position.x
-            and new_y == self.goal_position.y
-        )
-
-        if goal_reached:
-            reward += 50.0
-            done = True
-
         info = {
             "scout": {
                 "x": new_x,
@@ -410,12 +443,9 @@ class TacticalEnv:
                 "fuel": self.scout.state.fuel,
             },
             "goal": {
-                "x": self.goal_position.x,
-                "y": self.goal_position.y,
+                "x": self.strike_point.x,
+                "y": self.strike_point.y,
             },
-            "distance_to_goal": new_distance,
-            "distance_improvement": distance_improvement,
-            "goal_reached": goal_reached,
             "action": self.scout_action_name(action),
         }
 
@@ -431,10 +461,14 @@ class TacticalEnv:
         hx = self.hunter.state.position.x
         hy = self.hunter.state.position.y
 
-        hunter_reached_target = (
-            hx == self.strike_point.x
-            and hy == self.strike_point.y
+        hunter_reached_target_now = (
+            hx == self.strike_point.x and hy == self.strike_point.y
         )
+        target_reached_this_step = (
+            hunter_reached_target_now and not self.hunter_target_reached
+        )
+        if target_reached_this_step:
+            self.hunter_target_reached = True
 
         return {
             "x": hx,
@@ -444,7 +478,8 @@ class TacticalEnv:
                 "x": self.strike_point.x,
                 "y": self.strike_point.y,
             },
-            "target_reached": hunter_reached_target,
+            "target_reached": self.hunter_target_reached,
+            "target_reached_this_step": target_reached_this_step,
         }
 
     def _hunter_heuristic_move(self):
@@ -480,7 +515,7 @@ class TacticalEnv:
         best = None
         best_distance = current_distance
 
-        for (cx, cy) in candidates:
+        for cx, cy in candidates:
 
             if not self._is_inside_grid(cx, cy):
                 continue
@@ -520,9 +555,8 @@ class TacticalEnv:
         elif action != self.ACTION_STAY:
             raise ValueError(f"Invalid Hunter action: {action}")
 
-        if (
-            self._is_inside_grid(new_x, new_y)
-            and self.terrain.is_passable(new_x, new_y)
+        if self._is_inside_grid(new_x, new_y) and self.terrain.is_passable(
+            new_x, new_y
         ):
             self.hunter.move(new_x, new_y)
             self.hunter.consume_fuel(1.0)
@@ -544,10 +578,6 @@ class TacticalEnv:
         }
 
         return names.get(action, "UNKNOWN")
-
-    def _distance_to_goal(self, x: int, y: int) -> float:
-
-        return self._dist(x, y, self.goal_position.x, self.goal_position.y)
 
     @staticmethod
     def _dist(x0: int, y0: int, x1: int, y1: int) -> float:
@@ -598,7 +628,25 @@ class TacticalEnv:
             "action": info["action"],
             "hunter_action": info["hunter_action"],
             "lethal_hit": info["lethal_hit"],
-            "goal_reached": info["goal_reached"],
+            "hunter_lethal_hit": info[
+                "hunter_lethal_hit"
+            ],
+            "escort_distance": info[
+                "escort_distance"
+            ],
+            "escort_in_range": info[
+                "escort_in_range"
+            ],
+            "mission_success": info[
+                "mission_success"
+            ],
+            "mission_failed": info[
+                "mission_failed"
+            ],
+            "termination_reason": info[
+                "termination_reason"
+            ],
+
         }
 
         if terrain_grid is not None:

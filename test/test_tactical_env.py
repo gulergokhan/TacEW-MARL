@@ -26,7 +26,7 @@ class TestTacticalEnv(unittest.TestCase):
         self.observation = self.env.reset()
 
     def test_reset_returns_expected_observation_and_action_sizes(self):
-        self.assertEqual(len(self.observation), 84)
+        self.assertEqual(len(self.observation), 99)
         self.assertEqual(self.env.NUM_ACTIONS, 7)
 
     def test_hunter_heuristic_moves_toward_strike_point(self):
@@ -85,6 +85,59 @@ class TestTacticalEnv(unittest.TestCase):
         )
         self.assertEqual(hunter_status["state"], "LOCK")
 
+    def test_escort_mission_succeeds_when_hunter_reaches_target(self):
+        self.env.scout.move(2, 8)
+        self.env.hunter.move(2, 8)
+
+        with patch(
+            "radar.radar.random.random",
+            return_value=1.0,
+        ):
+            _, reward, done, info = self.env.step(
+                self.env.ACTION_STAY,
+                hunter_action=self.env.ACTION_LEFT,
+            )
+
+        self.assertTrue(done)
+        self.assertGreater(reward, 0.0)
+        self.assertTrue(
+            info["hunter"]["target_reached"]
+        )
+        self.assertTrue(
+            info["escort_in_range"]
+        )
+        self.assertTrue(
+            info["mission_success"]
+        )
+        self.assertFalse(
+            info["mission_failed"]
+        )
+        self.assertEqual(
+            info["termination_reason"],
+            "mission_success",
+        )
+
+    def test_hunter_lethal_ends_mission_as_failure(self):
+        self.env.hunter.move(2, 8)
+
+        radar = self.env.radar_system.get_radar("radar_02")
+        radar.lethal_lock_threshold = 1
+
+        with patch("radar.radar.random.random", return_value=0.0):
+            _, reward, done, info = self.env.step(
+                self.env.ACTION_STAY,
+                hunter_action=self.env.ACTION_STAY,
+            )
+
+        self.assertTrue(done)
+        self.assertLess(reward, 0.0)
+        self.assertTrue(info["hunter_lethal_hit"])
+        self.assertFalse(info["mission_success"])
+        self.assertTrue(info["mission_failed"])
+        self.assertEqual(
+            info["termination_reason"],
+            "hunter_lethal",
+        )
 
 if __name__ == "__main__":
     unittest.main()
