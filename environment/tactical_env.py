@@ -42,9 +42,29 @@ class TacticalEnv:
         weather_client: WeatherClient | None = None,
         scout_start_position: tuple[int, int] | None = None,
         hunter_start_position: tuple[int, int] | None = None,
+        strike_point: tuple[int, int] | None = None,
+        terrain_cells: list[dict] | None = None,
+        radars_config: list[dict] | None = None,
+        cell_km: float = 4.0,
     ):
+        """
+        width/height, strike_point, terrain_cells and radars_config let a
+        user-built scenario (e.g. exported from the dashboard's scenario
+        builder) fully override the default 10x10 demo map. Leave them None
+        to get the original hardcoded demo layout unchanged.
+
+        terrain_cells: [{"x": int, "y": int, "type": "MOUNTAIN"|"WATER"|
+            "URBAN"|"FOREST"}, ...] (PLAIN is the default, no entry needed)
+        radars_config: [{"radar_id": str, "x": int, "y": int,
+            "detection_range": float}, ...]
+        cell_km: real-world kilometers per grid cell — purely metadata,
+            used by the dashboard to geo-anchor the grid; carried through
+            to the exported log so the same scenario always renders at the
+            same scale.
+        """
         self.width = width
         self.height = height
+        self.cell_km = cell_km
 
         self.latitude = latitude
         self.longitude = longitude
@@ -62,8 +82,8 @@ class TacticalEnv:
         self.max_steps = 100
 
         self.strike_point = Position(
-            x=cfg.STRIKE_POINT[0],
-            y=cfg.STRIKE_POINT[1],
+            x=(strike_point or cfg.STRIKE_POINT)[0],
+            y=(strike_point or cfg.STRIKE_POINT)[1],
         )
 
         self.terrain = TerrainMap(
@@ -71,31 +91,46 @@ class TacticalEnv:
             height=height,
         )
 
-        # A modest terrain layout so line-of-sight/passability actually matter.
-        self._setup_default_terrain()
+        if terrain_cells is not None:
+            self._setup_custom_terrain(terrain_cells)
+        else:
+            # A modest terrain layout so line-of-sight/passability actually matter.
+            self._setup_default_terrain()
 
         self.weather_client = weather_client or WeatherClient()
         self.weather = weather or self._load_weather()
 
-        self.radar_system = RadarSystem(
-            radars=[
-                Radar(
-                    radar_id="radar_01",
-                    position=Position(x=5, y=5),
-                    detection_range=3.0,
-                ),
-                Radar(
-                    radar_id="radar_02",
-                    position=Position(x=2, y=7),
-                    detection_range=2.5,
-                ),
-                Radar(
-                    radar_id="radar_03",
-                    position=Position(x=7, y=3),
-                    detection_range=2.5,
-                ),
-            ]
-        )
+        if radars_config is not None:
+            self.radar_system = RadarSystem(
+                radars=[
+                    Radar(
+                        radar_id=r["radar_id"],
+                        position=Position(x=r["x"], y=r["y"]),
+                        detection_range=r.get("detection_range", 3.0),
+                    )
+                    for r in radars_config
+                ]
+            )
+        else:
+            self.radar_system = RadarSystem(
+                radars=[
+                    Radar(
+                        radar_id="radar_01",
+                        position=Position(x=5, y=5),
+                        detection_range=3.0,
+                    ),
+                    Radar(
+                        radar_id="radar_02",
+                        position=Position(x=2, y=7),
+                        detection_range=2.5,
+                    ),
+                    Radar(
+                        radar_id="radar_03",
+                        position=Position(x=7, y=3),
+                        detection_range=2.5,
+                    ),
+                ]
+            )
 
         self.observation_encoder = ObservationEncoder(
             width=width,
@@ -109,6 +144,48 @@ class TacticalEnv:
 
         # Per-step trace used to feed the dashboard. Populated on reset()/step().
         self.episode_log = []
+
+    @classmethod
+    def from_scenario(cls, scenario: dict, **overrides) -> "TacticalEnv":
+        """
+        Build a TacticalEnv from a scenario dict — the same shape the
+        dashboard's scenario builder exports. Expected keys:
+
+        {
+          "width": int, "height": int, "cell_km": float,
+          "scout_start": [x, y], "hunter_start": [x, y],
+          "strike_point": [x, y],
+          "terrain_cells": [{"x": .., "y": .., "type": "MOUNTAIN"}, ...],
+          "radars": [{"radar_id": .., "x": .., "y": .., "detection_range": ..}, ...]
+        }
+
+        Any key can be omitted to fall back to the built-in defaults.
+        Extra keyword overrides (e.g. weather=...) are passed straight
+        through to __init__.
+        """
+        kwargs = dict(
+            width=scenario.get("width", 10),
+            height=scenario.get("height", 10),
+            cell_km=scenario.get("cell_km", 4.0),
+            scout_start_position=tuple(scenario["scout_start"])
+            if "scout_start" in scenario else None,
+            hunter_start_position=tuple(scenario["hunter_start"])
+            if "hunter_start" in scenario else None,
+            strike_point=tuple(scenario["strike_point"])
+            if "strike_point" in scenario else None,
+            terrain_cells=scenario.get("terrain_cells"),
+            radars_config=scenario.get("radars"),
+        )
+        kwargs.update(overrides)
+        return cls(**kwargs)
+
+    def _setup_custom_terrain(self, terrain_cells: list[dict]):
+
+        from terrain.models import TerrainType
+
+        for cell in terrain_cells:
+            terrain_type = getattr(TerrainType, cell["type"])
+            self.terrain.set_terrain(cell["x"], cell["y"], terrain_type)
 
     def _setup_default_terrain(self):
 
@@ -205,6 +282,7 @@ class TacticalEnv:
         reward, done, scout_info = self._apply_scout_action(scout_action)
 
         hunter_info = self._apply_hunter_action(hunter_action)
+        hunter_reward = self.hunter_reward
 
         escort_distance = self._dist(
             self.scout.state.position.x,
@@ -220,11 +298,14 @@ class TacticalEnv:
 
         if escort_in_range:
             reward += cfg.ESCORT_REWARD
+            hunter_reward += cfg.ESCORT_REWARD
         else:
-            reward -= (
+            escort_penalty = (
                 escort_distance
                 - cfg.ESCORT_RADIUS
             ) * cfg.ESCORT_DISTANCE_PENALTY
+            reward -= escort_penalty
+            hunter_reward -= escort_penalty
 
         scout_info["escort_distance"] = escort_distance
         scout_info["escort_in_range"] = escort_in_range
@@ -254,9 +335,11 @@ class TacticalEnv:
 
         if hunter_detections:
             reward -= float(len(hunter_detections)*cfg.HUNTER_DETECTION_PENALTY)
+            hunter_reward -= float(len(hunter_detections)*cfg.HUNTER_DETECTION_PENALTY)
 
         if hunter_info["target_reached_this_step"] and not hunter_lethal_hit:
             reward += cfg.HUNTER_GOAL_REWARD
+            hunter_reward += cfg.HUNTER_GOAL_REWARD
 
         radar_failure = scout_lethal_hit or hunter_lethal_hit
 
@@ -278,6 +361,7 @@ class TacticalEnv:
 
             if hunter_lethal_hit:
                 reward += cfg.HUNTER_LETHAL_PENALTY
+                hunter_reward += cfg.HUNTER_LETHAL_PENALTY
 
             done = True
 
@@ -291,6 +375,7 @@ class TacticalEnv:
         elif mission_success:
 
             reward += cfg.MISSION_SUCCESS_REWARD
+            hunter_reward += cfg.MISSION_SUCCESS_REWARD
             done = True
             termination_reason = "mission_success"
 
@@ -351,6 +436,11 @@ class TacticalEnv:
             self.radar_system,
         )
 
+        # CTDE: decentralized per-agent observations + centralized joint
+        # state, alongside the legacy single `observation` above (kept for
+        # existing single-agent scripts).
+        agent_observations = self._get_agent_observations(state)
+
         info = {
             **scout_info,
             "hunter": hunter_info,
@@ -358,7 +448,18 @@ class TacticalEnv:
             "scout_action": scout_action,
             "hunter_action": hunter_action,
             "reward": reward,
+            "reward_scout": reward,
+            "reward_hunter": hunter_reward,
             "weather": self._weather_dict(),
+            "observations": {
+                "scout": agent_observations["scout"],
+                "hunter": agent_observations["hunter"],
+            },
+            "global_state": agent_observations["global"],
+            "heading": {
+                "scout": self.scout.state.heading,
+                "hunter": self.hunter.state.heading,
+            },
         }
 
         self._log_step(info)
@@ -453,6 +554,7 @@ class TacticalEnv:
                 "x": new_x,
                 "y": new_y,
                 "fuel": self.scout.state.fuel,
+                "heading": self.scout.state.heading,
             },
             "goal": {
                 "x": self.strike_point.x,
@@ -464,6 +566,8 @@ class TacticalEnv:
         return reward, done, info
 
     def _apply_hunter_action(self, hunter_action: int | None):
+
+        self.hunter_reward = 0.0
 
         if hunter_action is None:
             self._hunter_heuristic_move()
@@ -486,6 +590,7 @@ class TacticalEnv:
             "x": hx,
             "y": hy,
             "fuel": self.hunter.state.fuel,
+            "heading": self.hunter.state.heading,
             "strike_point": {
                 "x": self.strike_point.x,
                 "y": self.strike_point.y,
@@ -556,7 +661,14 @@ class TacticalEnv:
             self.hunter.consume_fuel(1.0)
 
     def _hunter_apply_explicit_action(self, action: int):
-        """Apply a movement-only action for future learned Hunter policies."""
+        """
+        Apply an explicit action for a learned Hunter policy. Hunter has the
+        same 7-action space as Scout (movement + JAM_SUPPRESS + JAM_DECEIVE) —
+        under CTDE both agents are independently learnable; this is only
+        reached when hunter_action is not None (see step()).
+        """
+
+        self.hunter_reward = 0.0
 
         if not self.hunter.is_operational():
             return
@@ -564,24 +676,59 @@ class TacticalEnv:
         hx = self.hunter.state.position.x
         hy = self.hunter.state.position.y
 
-        new_x, new_y = hx, hy
-
-        if action == self.ACTION_UP:
-            new_y -= 1
-        elif action == self.ACTION_DOWN:
-            new_y += 1
-        elif action == self.ACTION_LEFT:
-            new_x -= 1
-        elif action == self.ACTION_RIGHT:
-            new_x += 1
-        elif action != self.ACTION_STAY:
-            raise ValueError(f"Invalid Hunter action: {action}")
-
-        if self._is_inside_grid(new_x, new_y) and self.terrain.is_passable(
-            new_x, new_y
+        if action in (
+            self.ACTION_UP,
+            self.ACTION_DOWN,
+            self.ACTION_LEFT,
+            self.ACTION_RIGHT,
+            self.ACTION_STAY,
         ):
-            self.hunter.move(new_x, new_y)
-            self.hunter.consume_fuel(1.0)
+            new_x, new_y = hx, hy
+
+            if action == self.ACTION_UP:
+                new_y -= 1
+            elif action == self.ACTION_DOWN:
+                new_y += 1
+            elif action == self.ACTION_LEFT:
+                new_x -= 1
+            elif action == self.ACTION_RIGHT:
+                new_x += 1
+
+            if self._is_inside_grid(new_x, new_y) and self.terrain.is_passable(
+                new_x, new_y
+            ):
+                self.hunter.move(new_x, new_y)
+                self.hunter.consume_fuel(1.0)
+            else:
+                self.hunter_reward -= 1.0
+
+        elif action in (self.ACTION_JAM_SUPPRESS, self.ACTION_JAM_DECEIVE):
+
+            self.hunter.consume_fuel(1.5)
+
+            target_radar = self.radar_system.nearest_radar(
+                self.hunter.state.position,
+                max_range=cfg.JAM_RANGE,
+            )
+
+            if target_radar is None:
+                self.hunter_reward -= 0.5
+            elif action == self.ACTION_JAM_SUPPRESS:
+                self.radar_system.jam_suppress(
+                    target_radar.radar_id,
+                    strength=cfg.JAM_SUPPRESSION_STRENGTH,
+                    duration=cfg.JAM_SUPPRESSION_DURATION,
+                )
+                self.hunter_reward += 0.2
+            else:
+                self.radar_system.jam_deceive(
+                    target_radar.radar_id,
+                    duration=cfg.JAM_DECEPTION_DURATION,
+                )
+                self.hunter_reward += 0.2
+
+        else:
+            raise ValueError(f"Invalid Hunter action: {action}")
 
     # ==================================================
     # HELPERS
@@ -618,14 +765,33 @@ class TacticalEnv:
                 "x": self.scout.state.position.x,
                 "y": self.scout.state.position.y,
                 "fuel": self.scout.state.fuel,
+                "heading": self.scout.state.heading,
             },
             "hunter": {
                 "aircraft_id": self.hunter.state.aircraft_id,
                 "x": self.hunter.state.position.x,
                 "y": self.hunter.state.position.y,
                 "fuel": self.hunter.state.fuel,
+                "heading": self.hunter.state.heading,
             },
             "weather": self._weather_dict(),
+        }
+
+    def _get_agent_observations(self, state: dict):
+        """CTDE helper: decentralized per-agent observations + the joint
+        global state for a centralized critic. See ObservationEncoder for
+        the encoding details."""
+
+        return {
+            "scout": self.observation_encoder.encode_agent(
+                "scout", state, self.terrain, self.radar_system,
+            ),
+            "hunter": self.observation_encoder.encode_agent(
+                "hunter", state, self.terrain, self.radar_system,
+            ),
+            "global": self.observation_encoder.encode_global(
+                state, self.terrain, self.radar_system,
+            ),
         }
 
     # ==================================================
@@ -647,6 +813,7 @@ class TacticalEnv:
             "radar_status": info["radar_status"],
             "weather": info["weather"],
             "reward": info["reward"],
+            "reward_hunter": info.get("reward_hunter"),
             "action": info["action"],
             "hunter_action": info["hunter_action"],
             "lethal_hit": info["lethal_hit"],
@@ -673,8 +840,14 @@ class TacticalEnv:
 
         if terrain_grid is not None:
             entry["terrain_grid"] = terrain_grid
+            entry["cell_km"] = self.cell_km
             entry["radars"] = [
-                {"radar_id": r.radar_id, "x": r.position.x, "y": r.position.y}
+                {
+                    "radar_id": r.radar_id,
+                    "x": r.position.x,
+                    "y": r.position.y,
+                    "detection_range": r.detection_range,
+                }
                 for r in self.radar_system.radars
             ]
             entry["strike_point"] = {

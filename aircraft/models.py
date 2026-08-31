@@ -21,3 +21,6 @@ class AircraftState:
     fuel: float
     altitude: float
     speed: float
+    # Kinematics: heading in degrees, 0 = North, clockwise (matches wind_direction
+    # convention used by the weather module). Updated on every move().
+    heading: float = 0.0
