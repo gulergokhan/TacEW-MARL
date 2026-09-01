@@ -11,7 +11,7 @@ from agent.dqn_agent import DQNAgent
 from environment.tactical_env import TacticalEnv
 
 DEFAULT_SEED = 42
-
+DASHBOARD_EPISODE_INTERVAL = 100
 EPISODES = 1000
 PRINT_INTERVAL = 10
 CHECKPOINT_ROLLOUTS = 5
@@ -368,16 +368,30 @@ def train(seed=DEFAULT_SEED, verbose=True):
 
         agent.decay_epsilon()
 
-        training_episode_logs.append(
-            {
-                "label": f"Training Episode {episode}",
-                "episode": episode,
-                "reward": total_reward,
-                "detections": episode_detections,
-                "success": bool(info.get("mission_success", False)),
-                "steps": deepcopy(env.episode_log),
-            }
+        should_save_dashboard_episode = (
+            episode == 1
+            or episode % DASHBOARD_EPISODE_INTERVAL == 0
+            or episode == EPISODES
         )
+
+        if should_save_dashboard_episode:
+            training_episode_logs.append(
+                {
+                    "label": f"Training Episode {episode}",
+                    "episode": episode,
+                    "reward": total_reward,
+                    "detections": episode_detections,
+                    "success": bool(
+                        info.get(
+                            "mission_success",
+                            False,
+                        )
+                    ),
+                    "steps": deepcopy(
+                        env.episode_log
+                    ),
+                }
+            )
 
         if episode_losses:
 

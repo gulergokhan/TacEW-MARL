@@ -163,6 +163,7 @@ class TacticalEnv:
         Extra keyword overrides (e.g. weather=...) are passed straight
         through to __init__.
         """
+        cls._validate_scenario(scenario)
         kwargs = dict(
             width=scenario.get("width", 10),
             height=scenario.get("height", 10),
@@ -178,6 +179,189 @@ class TacticalEnv:
         )
         kwargs.update(overrides)
         return cls(**kwargs)
+
+    @staticmethod
+    def _validate_scenario(scenario: dict):
+        if not isinstance(scenario, dict):
+            raise ValueError(
+                "scenario must be a dictionary"
+            )
+
+        width = scenario.get("width", 10)
+        height = scenario.get("height", 10)
+        cell_km = scenario.get("cell_km", 4.0)
+
+        if type(width) is not int or width <= 0:
+            raise ValueError(
+                "width must be a positive integer"
+            )
+
+        if type(height) is not int or height <= 0:
+            raise ValueError(
+                "height must be a positive integer"
+            )
+
+        if (
+            isinstance(cell_km, bool)
+            or not isinstance(cell_km, (int, float))
+            or cell_km <= 0
+        ):
+            raise ValueError(
+                "cell_km must be a positive number"
+            )
+
+        for field_name in (
+            "scout_start",
+            "hunter_start",
+            "strike_point",
+        ):
+            if field_name not in scenario:
+                continue
+
+            position = scenario[field_name]
+
+            if (
+                not isinstance(position, (list, tuple))
+                or len(position) != 2
+                or any(
+                    type(coordinate) is not int
+                    for coordinate in position
+                )
+            ):
+                raise ValueError(
+                    f"{field_name} must contain two integers"
+                )
+
+            x, y = position
+
+            if not (
+                0 <= x < width
+                and 0 <= y < height
+            ):
+                raise ValueError(
+                    f"{field_name} must be inside the grid"
+                )
+
+        terrain_cells = scenario.get(
+            "terrain_cells"
+        )
+
+        if terrain_cells is not None:
+            if not isinstance(terrain_cells, list):
+                raise ValueError(
+                    "terrain_cells must be a list"
+                )
+
+            allowed_terrain_types = {
+                "PLAIN",
+                "MOUNTAIN",
+                "WATER",
+                "URBAN",
+                "FOREST",
+            }
+
+            for cell in terrain_cells:
+                if not isinstance(cell, dict):
+                    raise ValueError(
+                        "terrain_cells entries must be dictionaries"
+                    )
+
+                x = cell.get("x")
+                y = cell.get("y")
+                terrain_type = cell.get("type")
+
+                if (
+                    type(x) is not int
+                    or type(y) is not int
+                    or not (
+                        0 <= x < width
+                        and 0 <= y < height
+                    )
+                ):
+                    raise ValueError(
+                        "terrain_cells must be inside the grid"
+                    )
+
+                if terrain_type not in allowed_terrain_types:
+                    raise ValueError(
+                        "terrain_cells contains an invalid terrain type"
+                    )
+
+        radars = scenario.get("radars")
+
+        if radars is not None:
+            if not isinstance(radars, list):
+                raise ValueError(
+                    "radars must be a list"
+                )
+
+            if len(radars) > ObservationEncoder.MAX_RADARS:
+                raise ValueError(
+                    "Maximum supported radar count is 3"
+                )
+
+            radar_ids = set()
+            radar_positions = set()
+
+            for radar in radars:
+                if not isinstance(radar, dict):
+                    raise ValueError(
+                        "radars entries must be dictionaries"
+                    )
+
+                radar_id = radar.get("radar_id")
+                x = radar.get("x")
+                y = radar.get("y")
+                detection_range = radar.get(
+                    "detection_range",
+                    3.0,
+                )
+
+                if (
+                    not isinstance(radar_id, str)
+                    or not radar_id.strip()
+                ):
+                    raise ValueError(
+                        "radar_id must be a non-empty string"
+                    )
+
+                if radar_id in radar_ids:
+                    raise ValueError(
+                        f"Duplicate radar_id: {radar_id}"
+                    )
+
+                radar_ids.add(radar_id)
+
+                if (
+                    type(x) is not int
+                    or type(y) is not int
+                    or not (
+                        0 <= x < width
+                        and 0 <= y < height
+                    )
+                ):
+                    raise ValueError(
+                        "radars must be inside the grid"
+                    )
+
+                if (x, y) in radar_positions:
+                    raise ValueError(
+                        "radars cannot share the same position"
+                    )
+
+                radar_positions.add((x, y))
+
+                if (
+                    isinstance(detection_range, bool)
+                    or not isinstance(
+                        detection_range,
+                        (int, float),
+                    )
+                    or detection_range <= 0
+                ):
+                    raise ValueError(
+                        "radar detection_range must be positive"
+                    )
 
     def _setup_custom_terrain(self, terrain_cells: list[dict]):
 
@@ -280,6 +464,7 @@ class TacticalEnv:
         self.radar_system.advance_time()
 
         reward, done, scout_info = self._apply_scout_action(scout_action)
+        scout_reward = reward
 
         hunter_info = self._apply_hunter_action(hunter_action)
         hunter_reward = self.hunter_reward
@@ -298,6 +483,7 @@ class TacticalEnv:
 
         if escort_in_range:
             reward += cfg.ESCORT_REWARD
+            scout_reward += cfg.ESCORT_REWARD
             hunter_reward += cfg.ESCORT_REWARD
         else:
             escort_penalty = (
@@ -305,6 +491,7 @@ class TacticalEnv:
                 - cfg.ESCORT_RADIUS
             ) * cfg.ESCORT_DISTANCE_PENALTY
             reward -= escort_penalty
+            scout_reward -= escort_penalty
             hunter_reward -= escort_penalty
 
         scout_info["escort_distance"] = escort_distance
@@ -331,7 +518,12 @@ class TacticalEnv:
         )
 
         if scout_detections:
-            reward -= float(len(scout_detections)*cfg.SCOUT_DETECTION_PENALTY)
+            detection_penalty = float(
+                len(scout_detections)
+                * cfg.SCOUT_DETECTION_PENALTY
+            )
+            reward -= detection_penalty
+            scout_reward -= detection_penalty
 
         if hunter_detections:
             reward -= float(len(hunter_detections)*cfg.HUNTER_DETECTION_PENALTY)
@@ -358,6 +550,7 @@ class TacticalEnv:
 
             if scout_lethal_hit:
                 reward += cfg.LETHAL_PENALTY
+                scout_reward += cfg.LETHAL_PENALTY
 
             if hunter_lethal_hit:
                 reward += cfg.HUNTER_LETHAL_PENALTY
@@ -375,6 +568,7 @@ class TacticalEnv:
         elif mission_success:
 
             reward += cfg.MISSION_SUCCESS_REWARD
+            scout_reward += cfg.MISSION_SUCCESS_REWARD
             hunter_reward += cfg.MISSION_SUCCESS_REWARD
             done = True
             termination_reason = "mission_success"
@@ -448,7 +642,7 @@ class TacticalEnv:
             "scout_action": scout_action,
             "hunter_action": hunter_action,
             "reward": reward,
-            "reward_scout": reward,
+            "reward_scout": scout_reward,
             "reward_hunter": hunter_reward,
             "weather": self._weather_dict(),
             "observations": {

@@ -5,6 +5,9 @@ from radar.models import RadarState
 
 
 class ObservationEncoder:
+    MAX_RADARS = 3
+    GLOBAL_RADAR_FEATURES = 14
+    AGENT_RADAR_FEATURES = 9
 
     def __init__(self, width: int, height: int):
         self.width = width
@@ -140,9 +143,19 @@ class ObservationEncoder:
         # RADAR INFORMATION
         # ==========================================
 
-        if radar_system is not None:
+        radar_count = 0
 
-            for radar in radar_system.radars:
+        if radar_system is not None:
+            radars = radar_system.radars
+
+            if len(radars) > self.MAX_RADARS:
+                raise ValueError(
+                    f"Maximum supported radar count is {self.MAX_RADARS}"
+                )
+
+            radar_count = len(radars)
+
+            for radar in radars:
 
                 # Radar position
                 observation.append(
@@ -233,7 +246,19 @@ class ObservationEncoder:
                         ),
                     )
                 )
+                # Missing radar features
+        missing_radars = (
+            self.MAX_RADARS
+            - radar_count
+        )
 
+        observation.extend(
+            [0.0]
+            * (
+                missing_radars
+                * self.GLOBAL_RADAR_FEATURES
+            )
+        )
 
         return np.array(
             observation,
@@ -331,8 +356,19 @@ class ObservationEncoder:
                 observation.extend(self._terrain_one_hot(terrain_type))
 
         # ---- own radar picture only (decentralized: no teammate tracks) ----
+        radar_count = 0
+
         if radar_system is not None:
-            for radar in radar_system.radars:
+            radars = radar_system.radars
+
+            if len(radars) > self.MAX_RADARS:
+                raise ValueError(
+                    f"Maximum supported radar count is {self.MAX_RADARS}"
+                )
+
+            radar_count = len(radars)
+
+            for radar in radars:
 
                 observation.append(
                     self._normalize_position(radar.position.x, self.width)
@@ -361,6 +397,19 @@ class ObservationEncoder:
                         np.sqrt(self.width ** 2 + self.height ** 2),
                     )
                 )
+
+        missing_radars = (
+            self.MAX_RADARS
+            - radar_count
+        )
+
+        observation.extend(
+            [0.0]
+            * (
+                missing_radars
+                * self.AGENT_RADAR_FEATURES
+            )
+        )
 
         return np.array(observation, dtype=np.float32)
 

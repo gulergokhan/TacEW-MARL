@@ -22,13 +22,18 @@ entry in the episode dropdown, on the real map, with your terrain and
 radar layout.
 """
 
+import argparse
 import json
 import random
-import sys
 from pathlib import Path
 
 from environment.tactical_env import TacticalEnv
+from evaluate_tactical_dqn import (
+    DEFAULT_MODEL_PATH,
+    load_agent,
+)
 
+MAX_DASHBOARD_EPISODES = 20
 
 def scripted_scout_policy(env, rng):
     """Same simple heuristic as generate_dashboard_demo.py: move toward the
@@ -51,46 +56,150 @@ def scripted_scout_policy(env, rng):
         return env.ACTION_DOWN if ty > sy else env.ACTION_UP
     return env.ACTION_STAY
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run a dashboard scenario with "
+            "the trained DQN or heuristic policy."
+        )
+    )
+
+    parser.add_argument(
+        "scenario",
+        nargs="?",
+        type=Path,
+        default=Path("scenario.json"),
+    )
+
+    parser.add_argument(
+        "--policy",
+        choices=("dqn", "heuristic"),
+        default="dqn",
+    )
+
+    parser.add_argument(
+        "--model",
+        type=Path,
+        default=DEFAULT_MODEL_PATH,
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+    )
+
+    return parser.parse_args()
 
 def main():
-    scenario_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("scenario.json")
+    args = parse_args()
+    scenario_path = args.scenario
 
     if not scenario_path.exists():
         print(f"Can't find {scenario_path}.")
         print("Pass the path explicitly, e.g.:")
         print("    python3 run_scenario.py ~/Downloads/scenario.json")
-        sys.exit(1)
+        raise SystemExit(1)
 
     scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
 
-    env = TacticalEnv.from_scenario(scenario)
-    env.reset()
+    print(
+        f"Running scenario: {scenario_path.name} | "
+        f"Policy: {args.policy}",
+        flush=True,
+    )
 
-    rng = random.Random(0)
+    env = TacticalEnv.from_scenario(scenario)
+
+    agent = None
+
+    if args.policy == "dqn":
+        agent = load_agent(
+            env,
+            args.model,
+        )
+
+    observation = env.reset()
+    rng = random.Random(args.seed)
     done = False
+
     while not done:
-        scout_action = scripted_scout_policy(env, rng)
-        _, _, done, _ = env.step(scout_action, hunter_action=None)
+        if agent is not None:
+            scout_action = agent.select_action(
+                observation,
+                training=False,
+            )
+        else:
+            scout_action = scripted_scout_policy(
+                env,
+                rng,
+            )
+
+        observation, _, done, _ = env.step(
+            scout_action,
+            hunter_action=None,
+        )
 
     new_episode = {
-        "label": f"Custom scenario — {scenario_path.name}",
+        "label": (
+            f"Custom scenario ({args.policy}) — "
+            f"{scenario_path.name}"
+        ),
         "steps": env.episode_log,
     }
 
     output_path = Path("dashboard_logs/tactical_episodes.js")
 
     existing_episodes = []
+
     if output_path.exists():
-        text = output_path.read_text(encoding="utf-8")
-        # strip the "window.TACEW_EPISODES = " prefix and trailing ";"
-        json_text = text.split("=", 1)[1].strip().rstrip(";")
         try:
-            existing_episodes = json.loads(json_text).get("episodes", [])
-        except (json.JSONDecodeError, IndexError):
+            text = output_path.read_text(
+                encoding="utf-8"
+            )
+
+            _, separator, json_text = text.partition(
+                "="
+            )
+
+            if not separator:
+                raise ValueError(
+                    "Invalid dashboard episode file"
+                )
+
+            existing_payload = json.loads(
+                json_text.strip().rstrip(";")
+            )
+
+            existing_episodes = existing_payload.get(
+                "episodes",
+                [],
+            )
+
+            if not isinstance(
+                existing_episodes,
+                list,
+            ):
+                raise ValueError(
+                    "Dashboard episodes must be a list"
+                )
+
+        except (
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
             existing_episodes = []
 
     existing_episodes.append(new_episode)
-    payload = {"episodes": existing_episodes}
+
+    existing_episodes = existing_episodes[
+        -MAX_DASHBOARD_EPISODES:
+    ]
+
+    payload = {
+        "episodes": existing_episodes,
+    }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:

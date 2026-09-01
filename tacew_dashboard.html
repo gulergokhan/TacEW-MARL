@@ -456,7 +456,7 @@
           <div class="brush" data-brush="SCOUT"><span class="swatch" style="background:#35e28a"></span>Scout Start</div>
           <div class="brush" data-brush="HUNTER"><span class="swatch" style="background:#7fd6ff"></span>Hunter Start</div>
           <div class="brush" data-brush="STRIKE"><span class="swatch" style="background:#7fd6ff;border-radius:0;transform:rotate(45deg);"></span>Strike Point</div>
-          <div class="brush" data-brush="RADAR"><span class="swatch" style="background:#ffb020"></span>Add Radar (click)</div>
+          <div class="brush" data-brush="RADAR"><span class="swatch" style="background:#ffb020"></span>Add Radar (max 3)</div>
         </div>
 
         <div id="builderLayout">
@@ -901,9 +901,42 @@
     }
 
     function highlightLogRow() {
-      document.querySelectorAll('#actionLogBody tr').forEach(tr => tr.classList.remove('current-row'));
-      const row = document.querySelector(`#actionLogBody tr[data-step="${cur}"]`);
-      if (row) { row.classList.add('current-row'); row.scrollIntoView({ block: 'nearest' }); }
+      document
+        .querySelectorAll('#actionLogBody tr')
+        .forEach(
+          row => row.classList.remove('current-row')
+        );
+
+      const row = document.querySelector(
+        `#actionLogBody tr[data-step="${cur}"]`
+      );
+
+      if (!row) {
+        return;
+      }
+
+      row.classList.add('current-row');
+
+      const logWrap = document.getElementById(
+        'actionLogWrap'
+      );
+
+      const rowTop = row.offsetTop;
+      const rowBottom = rowTop + row.offsetHeight;
+      const visibleTop = logWrap.scrollTop;
+      const visibleBottom = (
+        visibleTop
+        + logWrap.clientHeight
+      );
+
+      if (rowTop < visibleTop) {
+        logWrap.scrollTop = rowTop;
+      } else if (rowBottom > visibleBottom) {
+        logWrap.scrollTop = (
+          rowBottom
+          - logWrap.clientHeight
+        );
+      }
     }
 
     // controls
@@ -1012,7 +1045,26 @@
       else if (currentBrush === 'HUNTER') { builder.hunterStart = [x, y]; }
       else if (currentBrush === 'STRIKE') { builder.strikePoint = [x, y]; }
       else if (currentBrush === 'RADAR') {
-        builder.radars.push({ radar_id: `radar_${String(radarCounter).padStart(2, '0')}`, x, y, detection_range: 3.0 });
+        if (builder.radars.length >= 3) {
+          alert('A maximum of 3 radars is supported.');
+          return;
+        }
+
+        const radarAlreadyExists = builder.radars.some(
+          radar => radar.x === x && radar.y === y
+        );
+
+        if (radarAlreadyExists) {
+          alert('A radar already exists in this cell.');
+          return;
+        }
+
+        builder.radars.push({
+          radar_id: `radar_${String(radarCounter).padStart(2, '0')}`,
+          x,
+          y,
+          detection_range: 3.0,
+        });
         radarCounter++;
       } else if (currentBrush === 'PLAIN') {
         delete builder.terrain[key(x, y)];

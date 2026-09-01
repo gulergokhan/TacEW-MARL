@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from terrain.models import TerrainType
 
 from environment.tactical_env import TacticalEnv
 from weather.models import WeatherState
@@ -182,6 +183,379 @@ class TestTacticalEnv(unittest.TestCase):
             info["termination_reason"],
             "hunter_lethal",
         )
+    def test_from_scenario_loads_custom_environment(self):
+        scenario = {
+            "width": 12,
+            "height": 8,
+            "cell_km": 2.5,
+            "scout_start": [1, 2],
+            "hunter_start": [2, 2],
+            "strike_point": [10, 6],
+            "terrain_cells": [
+                {
+                    "x": 3,
+                    "y": 3,
+                    "type": "MOUNTAIN",
+                }
+            ],
+            "radars": [
+                {
+                    "radar_id": "custom_01",
+                    "x": 5,
+                    "y": 4,
+                    "detection_range": 4.5,
+                }
+            ],
+        }
+        env = TacticalEnv.from_scenario(
+            scenario,
+            weather=clear_weather(),
+        )
+        observation = env.reset()
+
+        self.assertEqual(
+            len(observation),
+            99,
+        )
+
+        with patch(
+            "radar.radar.random.random",
+            return_value=1.0,
+        ):
+            _, _, _, info = env.step(
+                env.ACTION_STAY,
+                hunter_action=env.ACTION_STAY,
+            )
+
+        self.assertEqual(
+            len(info["observations"]["scout"]),
+            85,
+        )
+        self.assertEqual(
+            len(info["observations"]["hunter"]),
+            85,
+        )
+        self.assertEqual(
+            len(info["global_state"]),
+            99,
+        )
+
+        self.assertEqual(env.width, 12)
+        self.assertEqual(env.height, 8)
+        self.assertEqual(env.cell_km, 2.5)
+
+        self.assertEqual(
+            (
+                env.scout.state.position.x,
+                env.scout.state.position.y,
+            ),
+            (1, 2),
+        )
+        self.assertEqual(
+            (
+                env.hunter.state.position.x,
+                env.hunter.state.position.y,
+            ),
+            (2, 2),
+        )
+        self.assertEqual(
+            (
+                env.strike_point.x,
+                env.strike_point.y,
+            ),
+            (10, 6),
+        )
+
+        self.assertEqual(
+            env.terrain.get_terrain(3, 3),
+            TerrainType.MOUNTAIN,
+        )
+
+        self.assertEqual(
+            len(env.radar_system.radars),
+            1,
+        )
+        self.assertEqual(
+            env.radar_system.radars[0].radar_id,
+            "custom_01",
+        )
+    def test_observation_sizes_stay_fixed_for_supported_radar_counts(self):
+        for radar_count in range(4):
+            with self.subTest(
+                radar_count=radar_count,
+            ):
+                radars = [
+                    {
+                        "radar_id": f"radar_{index + 1:02d}",
+                        "x": index + 1,
+                        "y": 4,
+                        "detection_range": 3.0,
+                    }
+                    for index in range(radar_count)
+                ]
+
+            env = TacticalEnv.from_scenario(
+                    {
+                        "radars": radars,
+                    },
+                    weather=clear_weather(),
+                )
+
+            observation = env.reset()
+
+            with patch(
+                    "radar.radar.random.random",
+                    return_value=1.0,
+                ):
+                    _, _, _, info = env.step(
+                        env.ACTION_STAY,
+                        hunter_action=env.ACTION_STAY,
+                    )
+
+            self.assertEqual(
+                    len(observation),
+                    99,
+                )
+            self.assertEqual(
+                    len(info["observations"]["scout"]),
+                    85,
+                )
+            self.assertEqual(
+                    len(info["observations"]["hunter"]),
+                    85,
+                )
+            self.assertEqual(
+                    len(info["global_state"]),
+                    99,
+                )
+    def test_scenario_rejects_invalid_terrain_cell(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "terrain_cells",
+        ):
+            TacticalEnv.from_scenario(
+                {
+                    "width": 10,
+                    "height": 10,
+                    "terrain_cells": [
+                        {
+                            "x": 10,
+                            "y": 2,
+                            "type": "MOUNTAIN",
+                        }
+                    ],
+                },
+                weather=clear_weather(),
+            )
+
+    def test_scenario_rejects_duplicate_radar_ids(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "radar_id",
+        ):
+            TacticalEnv.from_scenario(
+                {
+                    "radars": [
+                        {
+                            "radar_id": "radar_01",
+                            "x": 2,
+                            "y": 2,
+                            "detection_range": 3.0,
+                        },
+                        {
+                            "radar_id": "radar_01",
+                            "x": 6,
+                            "y": 6,
+                            "detection_range": 3.0,
+                        },
+                    ],
+                },
+                weather=clear_weather(),
+            )
+
+    def test_more_than_three_radars_are_rejected(self):
+        radars = [
+            {
+                "radar_id": f"radar_{index + 1:02d}",
+                "x": index + 1,
+                "y": 4,
+                "detection_range": 3.0,
+            }
+            for index in range(4)
+        ]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Maximum supported radar count is 3",
+        ):
+            TacticalEnv.from_scenario(
+                {
+                    "radars": radars,
+                },
+                weather=clear_weather(),
+            )
+
+    def test_step_returns_ctde_observations(self):
+        with patch(
+            "radar.radar.random.random",
+            return_value=1.0,
+        ):
+            _, _, _, info = self.env.step(
+                self.env.ACTION_STAY,
+                hunter_action=self.env.ACTION_STAY,
+            )
+
+        self.assertIn("observations", info)
+        self.assertIn("global_state", info)
+
+        self.assertEqual(
+            len(info["observations"]["scout"]),
+            85,
+        )
+        self.assertEqual(
+            len(info["observations"]["hunter"]),
+            85,
+        )
+        self.assertEqual(
+            len(info["global_state"]),
+            99,
+        )
+
+        self.assertIn("reward_scout", info)
+        self.assertIn("reward_hunter", info)
+        self.assertIn("heading", info)
+
+    def test_aircraft_heading_updates_with_movement(self):
+        self.env.scout.move(7, 6)
+        self.assertAlmostEqual(
+            self.env.scout.state.heading,
+            0.0,
+        )
+
+        self.env.scout.move(8, 6)
+        self.assertAlmostEqual(
+            self.env.scout.state.heading,
+            90.0,
+        )
+
+        self.env.scout.move(8, 7)
+        self.assertAlmostEqual(
+            self.env.scout.state.heading,
+            180.0,
+        )
+
+        self.env.scout.move(7, 7)
+        self.assertAlmostEqual(
+            self.env.scout.state.heading,
+            270.0,
+        )
+
+    def test_hunter_accepts_explicit_movement_action(self):
+        initial_fuel = self.env.hunter.state.fuel
+
+        with patch(
+            "radar.radar.random.random",
+            return_value=1.0,
+        ):
+            _, _, _, info = self.env.step(
+                self.env.ACTION_STAY,
+                hunter_action=self.env.ACTION_UP,
+            )
+
+        self.assertEqual(
+            (
+                self.env.hunter.state.position.x,
+                self.env.hunter.state.position.y,
+            ),
+            (8, 7),
+        )
+        self.assertEqual(
+            self.env.hunter.state.fuel,
+            initial_fuel - 1.0,
+        )
+        self.assertAlmostEqual(
+            self.env.hunter.state.heading,
+            0.0,
+        )
+        self.assertEqual(
+            info["hunter_action"],
+            self.env.ACTION_UP,
+        )
+    def test_hunter_detection_does_not_change_scout_reward(self):
+        def run_step(radars):
+            env = TacticalEnv(
+                weather=clear_weather(),
+                radars_config=radars,
+            )
+            env.reset()
+
+            with patch(
+                "radar.radar.random.random",
+                return_value=0.0,
+            ):
+                _, _, _, info = env.step(
+                    env.ACTION_STAY,
+                    hunter_action=env.ACTION_STAY,
+                )
+
+            return info
+
+        no_radar_info = run_step([])
+
+        hunter_radar_info = run_step(
+            [
+                {
+                    "radar_id": "hunter_radar",
+                    "x": 8,
+                    "y": 8,
+                    "detection_range": 0.5,
+                }
+            ]
+        )
+
+        self.assertEqual(
+            len(hunter_radar_info["radar_detections"]),
+            0,
+        )
+        self.assertEqual(
+            len(hunter_radar_info["hunter_radar_detections"]),
+            1,
+        )
+
+        self.assertAlmostEqual(
+            hunter_radar_info["reward_scout"],
+            no_radar_info["reward_scout"],
+        )
+
+        self.assertLess(
+            hunter_radar_info["reward_hunter"],
+            no_radar_info["reward_hunter"],
+        )
+    def test_scenario_rejects_position_outside_grid(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "scout_start",
+        ):
+            TacticalEnv.from_scenario(
+                {
+                    "width": 10,
+                    "height": 10,
+                    "scout_start": [10, 0],
+                },
+                weather=clear_weather(),
+            )
+
+    def test_scenario_rejects_non_positive_cell_size(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "cell_km",
+        ):
+            TacticalEnv.from_scenario(
+                {
+                    "cell_km": 0,
+                },
+                weather=clear_weather(),
+            )
 
 if __name__ == "__main__":
     unittest.main()
