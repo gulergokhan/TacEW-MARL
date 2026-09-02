@@ -12,30 +12,36 @@ from environment.tactical_env import TacticalEnv
 
 DEFAULT_SEED = 42
 DASHBOARD_EPISODE_INTERVAL = 100
-EPISODES = 1000
-PRINT_INTERVAL = 10
+EPISODES = 3000
+PRINT_INTERVAL = 25
 CHECKPOINT_ROLLOUTS = 5
-TRAINING_START_SCENARIOS = [
-    (
-        (7, 7),
-        (8, 8),
-    ),
-    (
-        (7, 8),
-        (8, 8),
-    ),
-    (
-        (6, 7),
-        (8, 8),
-    ),
-    (
-        (8, 5),
-        (8, 6),
-    ),
+TRAINING_START_FORMATIONS = [
+    ((7, 7), (8, 8)),
+    ((7, 8), (8, 8)),
+    ((6, 7), (8, 8)),
+    ((8, 5), (8, 6)),
 ]
+
+TRAINING_STRIKE_POINTS = [
+    (1, 8),
+    (8, 0),
+    (8, 9),
+    (1, 1),
+]
+
+TRAINING_SCENARIOS = [
+    {
+        "scout_start": scout_start,
+        "hunter_start": hunter_start,
+        "strike_point": strike_point,
+    }
+    for scout_start, hunter_start in TRAINING_START_FORMATIONS
+    for strike_point in TRAINING_STRIKE_POINTS
+]
+
 ACTION_SIZE = TacticalEnv.NUM_ACTIONS
 
-MODEL_PATH = Path(__file__).resolve().parent / "models" / "tactical_dqn.pth"
+MODEL_PATH = Path(__file__).resolve().parent / "models" / "tactical_dqn_goal_aware.pth"
 
 DASHBOARD_LOG_PATH = (
     Path(__file__).resolve().parent / "dashboard_logs" / "tactical_episodes.json"
@@ -44,7 +50,6 @@ DASHBOARD_LOG_PATH = (
 DASHBOARD_DATA_PATH = (
     Path(__file__).resolve().parent / "dashboard_logs" / "tactical_episodes.js"
 )
-
 
 def set_seed(seed):
 
@@ -117,16 +122,8 @@ def evaluate_greedy(agent, env, verbose=False):
         total_reward += reward
         steps += 1
 
-        detections = (
-            info.get(
-                "radar_detections",
-                []
-            )
-            +
-            info.get(
-                "hunter_radar_detections",
-                []
-            )
+        detections = info.get("radar_detections", []) + info.get(
+            "hunter_radar_detections", []
         )
 
         total_detections += len(detections)
@@ -151,6 +148,7 @@ def evaluate_greedy(agent, env, verbose=False):
         "mission_success": info.get("mission_success", False),
     }
 
+
 def evaluate_training_scenarios(agent, env):
 
     random_state = random.getstate()
@@ -159,30 +157,15 @@ def evaluate_training_scenarios(agent, env):
     episode_logs = []
 
     try:
-        for (
-            scenario_index,
-            (
-                scout_start,
-                hunter_start,
-            ),
-        ) in enumerate(
-            TRAINING_START_SCENARIOS
+        for scenario_index, scenario in enumerate(
+            TRAINING_SCENARIOS
         ):
-            for rollout in range(
-                CHECKPOINT_ROLLOUTS
-            ):
-                random.seed(
-                    9000
-                    + scenario_index * 100
-                    + rollout
-                )
+            for rollout in range(CHECKPOINT_ROLLOUTS):
+                random.seed(9000 + scenario_index * 100 + rollout)
 
-                env.scout_start_position = (
-                    scout_start
-                )
-                env.hunter_start_position = (
-                    hunter_start
-                )
+                env.scout_start_position = scenario["scout_start"]
+                env.hunter_start_position = scenario["hunter_start"]
+                env.strike_point.x, env.strike_point.y = scenario["strike_point"]
 
                 result = evaluate_greedy(
                     agent,
@@ -191,9 +174,7 @@ def evaluate_training_scenarios(agent, env):
                 )
 
                 evaluations.append(result)
-                episode_logs.append(
-                    deepcopy(env.episode_log)
-                )
+                episode_logs.append(deepcopy(env.episode_log))
 
     finally:
         random.setstate(random_state)
@@ -203,35 +184,16 @@ def evaluate_training_scenarios(agent, env):
         key=lambda index: evaluations[index]["reward"],
     )
 
-    successful_rollouts = sum(
-        result["mission_success"]
-        for result in evaluations
-    )
+    successful_rollouts = sum(result["mission_success"] for result in evaluations)
 
     return {
-        "reward": sum(
-            result["reward"]
-            for result in evaluations
-        ) / len(evaluations),
-        "detections": sum(
-            result["detections"]
-            for result in evaluations
-        ) / len(evaluations),
-        "steps": sum(
-            result["steps"]
-            for result in evaluations
-        ) / len(evaluations),
-        "mission_success": (
-            successful_rollouts
-            == len(evaluations)
-        ),
-        "success_rate": (
-            successful_rollouts
-            / len(evaluations)
-        ),
-        "worst_episode_log": (
-            episode_logs[worst_index]
-        ),
+        "reward": sum(result["reward"] for result in evaluations) / len(evaluations),
+        "detections": sum(result["detections"] for result in evaluations)
+        / len(evaluations),
+        "steps": sum(result["steps"] for result in evaluations) / len(evaluations),
+        "mission_success": (successful_rollouts == len(evaluations)),
+        "success_rate": (successful_rollouts / len(evaluations)),
+        "worst_episode_log": (episode_logs[worst_index]),
     }
 
 
@@ -291,7 +253,7 @@ def train(seed=DEFAULT_SEED, verbose=True):
         batch_size=64,
         epsilon=1.0,
         epsilon_min=0.05,
-        epsilon_decay=0.995,
+        epsilon_decay=0.9985,
         target_update_freq=500,
     )
 
@@ -320,20 +282,13 @@ def train(seed=DEFAULT_SEED, verbose=True):
 
     for episode in range(1, EPISODES + 1):
 
-        (
-            scout_start,
-            hunter_start,
-        ) = random.choice(
-            TRAINING_START_SCENARIOS
-        )
+        scenario = random.choice(TRAINING_SCENARIOS)
 
-        env.scout_start_position = (
-            scout_start
-        )
-
-        env.hunter_start_position = (
-            hunter_start
-        )
+        env.scout_start_position = scenario["scout_start"]
+        env.hunter_start_position = scenario["hunter_start"]
+        env.strike_point.x, env.strike_point.y = scenario[
+            "strike_point"
+        ]
 
         state = env.reset()
 
@@ -351,7 +306,13 @@ def train(seed=DEFAULT_SEED, verbose=True):
 
             next_state, reward, done, info = env.step(action)
 
-            detections = (info.get("radar_detections", [],)+info.get("hunter_radar_detections",[],))
+            detections = info.get(
+                "radar_detections",
+                [],
+            ) + info.get(
+                "hunter_radar_detections",
+                [],
+            )
 
             episode_detections += len(detections)
 
@@ -387,9 +348,7 @@ def train(seed=DEFAULT_SEED, verbose=True):
                             False,
                         )
                     ),
-                    "steps": deepcopy(
-                        env.episode_log
-                    ),
+                    "steps": deepcopy(env.episode_log),
                 }
             )
 
@@ -415,7 +374,10 @@ def train(seed=DEFAULT_SEED, verbose=True):
 
             average_detections = sum(detection_window) / len(detection_window)
 
-            evaluation = evaluate_training_scenarios(agent, env,)
+            evaluation = evaluate_training_scenarios(
+                agent,
+                env,
+            )
 
             evaluation_reward = evaluation["reward"]
 
@@ -439,10 +401,7 @@ def train(seed=DEFAULT_SEED, verbose=True):
 
             history["mission_success"].append(mission_success)
 
-            history["scenario_success_rate"].append(
-                scenario_success_rate
-            )
-
+            history["scenario_success_rate"].append(scenario_success_rate)
 
             mission_bonus = 100.0 * scenario_success_rate
 

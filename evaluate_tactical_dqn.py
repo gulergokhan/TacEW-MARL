@@ -12,7 +12,7 @@ from environment.tactical_env import TacticalEnv
 DEFAULT_MODEL_PATH = (
     Path(__file__).resolve().parent
     / "models"
-    / "tactical_dqn.pth"
+    / "tactical_dqn_goal_aware.pth"
 )
 
 DEFAULT_LOG_PATH = (

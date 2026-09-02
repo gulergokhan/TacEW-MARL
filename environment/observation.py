@@ -23,6 +23,7 @@ class ObservationEncoder:
         scout = state["scout"]
         hunter = state["hunter"]
         weather = state["weather"]
+        strike_point = state["strike_point"]
 
         observation = [
 
@@ -64,6 +65,19 @@ class ObservationEncoder:
                 hunter["fuel"],
                 0.0,
                 100.0,
+            ),
+            # ==========================================
+            # STRIKE POINT
+            # ==========================================
+
+            self._normalize_position(
+                strike_point["x"],
+                self.width,
+            ),
+
+            self._normalize_position(
+                strike_point["y"],
+                self.height,
             ),
 
             # ==========================================
@@ -311,6 +325,7 @@ class ObservationEncoder:
         self_state = state[agent_id]
         other_state = state[other_id]
         weather = state["weather"]
+        strike_point = state["strike_point"]
 
         self_x, self_y = self_state["x"], self_state["y"]
         self_agent_id = self_state.get(
@@ -337,6 +352,18 @@ class ObservationEncoder:
                 2 * self.height,
             ),
             self._normalize(other_state["fuel"], 0.0, 100.0),
+
+            # ---- target, relative to self ----
+            self._normalize(
+                (strike_point["x"] - self_x) + self.width,
+                0.0,
+                2 * self.width,
+            ),
+            self._normalize(
+                (strike_point["y"] - self_y) + self.height,
+                0.0,
+                2 * self.height,
+            ),
 
             # ---- shared weather ----
             self._normalize(weather["temperature"], -50.0, 50.0),

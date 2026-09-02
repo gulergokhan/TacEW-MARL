@@ -52,8 +52,48 @@ class TestTacticalEnv(unittest.TestCase):
         self.observation = self.env.reset()
 
     def test_reset_returns_expected_observation_and_action_sizes(self):
-        self.assertEqual(len(self.observation), 99)
+        self.assertEqual(len(self.observation), 101)
         self.assertEqual(self.env.NUM_ACTIONS, 7)
+
+    def test_strike_point_changes_agent_observations(self):
+        first_env = TacticalEnv(
+            weather=clear_weather(),
+            strike_point=(1, 8),
+        )
+        second_env = TacticalEnv(
+            weather=clear_weather(),
+            strike_point=(8, 1),
+        )
+
+        first_observation = first_env.reset()
+        second_observation = second_env.reset()
+
+        self.assertNotEqual(
+            first_observation[6:8].tolist(),
+            second_observation[6:8].tolist(),
+        )
+
+        with patch(
+            "radar.radar.random.random",
+            return_value=1.0,
+        ):
+            _, _, _, first_info = first_env.step(
+                first_env.ACTION_STAY,
+                hunter_action=first_env.ACTION_STAY,
+            )
+            _, _, _, second_info = second_env.step(
+                second_env.ACTION_STAY,
+                hunter_action=second_env.ACTION_STAY,
+            )
+
+        self.assertNotEqual(
+            first_info["observations"]["scout"][7:9].tolist(),
+            second_info["observations"]["scout"][7:9].tolist(),
+        )
+        self.assertNotEqual(
+            first_info["observations"]["hunter"][7:9].tolist(),
+            second_info["observations"]["hunter"][7:9].tolist(),
+        )
 
     def test_hunter_heuristic_moves_toward_strike_point(self):
         self.env.step(self.env.ACTION_STAY)
@@ -94,6 +134,30 @@ class TestTacticalEnv(unittest.TestCase):
         self.assertGreater(radar.suppression_jam, 0.0)
         self.assertGreater(radar.suppression_timer, 0)
         self.assertEqual(info["action"], "JAM_SUPPRESS")
+
+    def test_repeated_suppression_jam_does_not_refresh_timer(self):
+        self.env.scout.move(4, 5)
+
+        with patch(
+            "radar.radar.random.random",
+            return_value=1.0,
+        ):
+            self.env.step(
+                self.env.ACTION_JAM_SUPPRESS,
+                hunter_action=self.env.ACTION_STAY,
+            )
+            radar = self.env.radar_system.get_radar("radar_01")
+            first_timer = radar.suppression_timer
+
+            self.env.step(
+                self.env.ACTION_JAM_SUPPRESS,
+                hunter_action=self.env.ACTION_STAY,
+            )
+
+        self.assertEqual(
+            radar.suppression_timer,
+            first_timer - 1,
+        )
 
     def test_episode_log_can_be_exported(self):
         self.env.step(self.env.ACTION_RIGHT)
@@ -215,7 +279,7 @@ class TestTacticalEnv(unittest.TestCase):
 
         self.assertEqual(
             len(observation),
-            99,
+            101,
         )
 
         with patch(
@@ -229,15 +293,15 @@ class TestTacticalEnv(unittest.TestCase):
 
         self.assertEqual(
             len(info["observations"]["scout"]),
-            85,
+            87,
         )
         self.assertEqual(
             len(info["observations"]["hunter"]),
-            85,
+            87,
         )
         self.assertEqual(
             len(info["global_state"]),
-            99,
+            101,
         )
 
         self.assertEqual(env.width, 12)
@@ -314,19 +378,19 @@ class TestTacticalEnv(unittest.TestCase):
 
             self.assertEqual(
                     len(observation),
-                    99,
+                    101,
                 )
             self.assertEqual(
                     len(info["observations"]["scout"]),
-                    85,
+                    87,
                 )
             self.assertEqual(
                     len(info["observations"]["hunter"]),
-                    85,
+                    87,
                 )
             self.assertEqual(
                     len(info["global_state"]),
-                    99,
+                    101,
                 )
     def test_scenario_rejects_invalid_terrain_cell(self):
         with self.assertRaisesRegex(
@@ -410,15 +474,15 @@ class TestTacticalEnv(unittest.TestCase):
 
         self.assertEqual(
             len(info["observations"]["scout"]),
-            85,
+            87,
         )
         self.assertEqual(
             len(info["observations"]["hunter"]),
-            85,
+            87,
         )
         self.assertEqual(
             len(info["global_state"]),
-            99,
+            101,
         )
 
         self.assertIn("reward_scout", info)

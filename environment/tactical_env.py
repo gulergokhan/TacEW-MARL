@@ -723,19 +723,25 @@ class TacticalEnv:
                 reward -= 0.5
 
             elif action == self.ACTION_JAM_SUPPRESS:
-                self.radar_system.jam_suppress(
-                    target_radar.radar_id,
-                    strength=cfg.JAM_SUPPRESSION_STRENGTH,
-                    duration=cfg.JAM_SUPPRESSION_DURATION,
-                )
-                reward += 0.2
+                if target_radar.suppression_timer > 0:
+                    reward -= 0.25
+                else:
+                    self.radar_system.jam_suppress(
+                        target_radar.radar_id,
+                        strength=cfg.JAM_SUPPRESSION_STRENGTH,
+                        duration=cfg.JAM_SUPPRESSION_DURATION,
+                    )
+                    reward += 0.2
 
             else:
-                self.radar_system.jam_deceive(
-                    target_radar.radar_id,
-                    duration=cfg.JAM_DECEPTION_DURATION,
-                )
-                reward += 0.2
+                if target_radar.deception_timer > 0:
+                    reward -= 0.25
+                else:
+                    self.radar_system.jam_deceive(
+                        target_radar.radar_id,
+                        duration=cfg.JAM_DECEPTION_DURATION,
+                    )
+                    reward += 0.2
 
         else:
             raise ValueError(f"Invalid action: {action}")
@@ -908,18 +914,24 @@ class TacticalEnv:
             if target_radar is None:
                 self.hunter_reward -= 0.5
             elif action == self.ACTION_JAM_SUPPRESS:
-                self.radar_system.jam_suppress(
-                    target_radar.radar_id,
-                    strength=cfg.JAM_SUPPRESSION_STRENGTH,
-                    duration=cfg.JAM_SUPPRESSION_DURATION,
-                )
-                self.hunter_reward += 0.2
+                if target_radar.suppression_timer > 0:
+                    self.hunter_reward -= 0.25
+                else:
+                    self.radar_system.jam_suppress(
+                        target_radar.radar_id,
+                        strength=cfg.JAM_SUPPRESSION_STRENGTH,
+                        duration=cfg.JAM_SUPPRESSION_DURATION,
+                    )
+                    self.hunter_reward += 0.2
             else:
-                self.radar_system.jam_deceive(
-                    target_radar.radar_id,
-                    duration=cfg.JAM_DECEPTION_DURATION,
-                )
-                self.hunter_reward += 0.2
+                if target_radar.deception_timer > 0:
+                    self.hunter_reward -= 0.25
+                else:
+                    self.radar_system.jam_deceive(
+                        target_radar.radar_id,
+                        duration=cfg.JAM_DECEPTION_DURATION,
+                    )
+                    self.hunter_reward += 0.2
 
         else:
             raise ValueError(f"Invalid Hunter action: {action}")
@@ -968,6 +980,11 @@ class TacticalEnv:
                 "fuel": self.hunter.state.fuel,
                 "heading": self.hunter.state.heading,
             },
+            "strike_point": {
+                "x": self.strike_point.x,
+                "y": self.strike_point.y,
+            },
+
             "weather": self._weather_dict(),
         }
 
