@@ -33,7 +33,7 @@ from evaluate_tactical_dqn import (
     load_agent,
 )
 
-MAX_DASHBOARD_EPISODES = 20
+MAX_CUSTOM_DASHBOARD_EPISODES = 20
 
 def scripted_scout_policy(env, rng):
     """Same simple heuristic as generate_dashboard_demo.py: move toward the
@@ -147,33 +147,42 @@ def main():
         ),
         "steps": env.episode_log,
     }
-
-    output_path = Path("dashboard_logs/tactical_episodes.js")
+    json_output_path = Path(
+        "dashboard_logs/tactical_episodes.json"
+    )
+    js_output_path = Path(
+        "dashboard_logs/tactical_episodes.js"
+    )
 
     existing_episodes = []
 
-    if output_path.exists():
+    source_path = (
+        json_output_path
+        if json_output_path.exists()
+        else js_output_path
+    )
+
+    if source_path.exists():
         try:
-            text = output_path.read_text(
+            text = source_path.read_text(
                 encoding="utf-8"
             )
 
-            _, separator, json_text = text.partition(
-                "="
-            )
-
-            if not separator:
-                raise ValueError(
-                    "Invalid dashboard episode file"
+            if source_path.suffix == ".js":
+                _, separator, json_text = (
+                    text.partition("=")
                 )
 
-            existing_payload = json.loads(
-                json_text.strip().rstrip(";")
-            )
+                if not separator:
+                    raise ValueError(
+                        "Invalid dashboard episode file"
+                    )
 
-            existing_episodes = existing_payload.get(
-                "episodes",
-                [],
+                text = json_text.strip().rstrip(";")
+
+            existing_payload = json.loads(text)
+            existing_episodes = (
+                existing_payload.get("episodes", [])
             )
 
             if not isinstance(
@@ -191,26 +200,71 @@ def main():
         ):
             existing_episodes = []
 
-    existing_episodes.append(new_episode)
-
-    existing_episodes = existing_episodes[
-        -MAX_DASHBOARD_EPISODES:
+    training_episodes = [
+        episode
+        for episode in existing_episodes
+        if not str(
+            episode.get("label", "")
+        ).startswith("Custom scenario")
     ]
+
+    custom_episodes = [
+        episode
+        for episode in existing_episodes
+        if str(
+            episode.get("label", "")
+        ).startswith("Custom scenario")
+    ]
+
+    custom_episodes.append(new_episode)
+
+    existing_episodes = (
+        training_episodes
+        + custom_episodes[
+            -MAX_CUSTOM_DASHBOARD_EPISODES:
+        ]
+    )
 
     payload = {
         "episodes": existing_episodes,
     }
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as f:
-        f.write("window.TACEW_EPISODES = ")
-        json.dump(payload, f)
-        f.write(";\n")
+    json_output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    outcome = new_episode["steps"][-1].get("termination_reason")
-    print(f"Ran your scenario: {len(new_episode['steps'])} steps, outcome={outcome}")
-    print(f"Appended to {output_path} — now has {len(existing_episodes)} episode(s).")
-    print("Refresh tacew_dashboard.html in the browser and pick it from the episode dropdown.")
+    json_output_path.write_text(
+        json.dumps(payload, indent=2),
+        encoding="utf-8",
+    )
+
+    js_output_path.write_text(
+        "window.TACEW_EPISODES = "
+        + json.dumps(payload)
+        + ";\n",
+        encoding="utf-8",
+    )
+
+    outcome = new_episode["steps"][-1].get(
+        "termination_reason"
+    )
+
+    print(
+        f"Ran your scenario: "
+        f"{len(new_episode['steps'])} steps, "
+        f"outcome={outcome}"
+    )
+
+    print(
+        f"Dashboard now has "
+        f"{len(existing_episodes)} episode(s)."
+    )
+
+    print(
+        "The new episode is ready in "
+        "Sortie Playback."
+    )
 
 
 if __name__ == "__main__":
