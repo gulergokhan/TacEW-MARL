@@ -1096,7 +1096,19 @@
                 Run in Environment
               </button>
             </div>
+            <div class="scenario-run-row" style="margin-top:8px; align-items:flex-end;">
+              <div class="field" style="flex:1;">
+                <label for="bTrainEpisodes">
+                  Training Episodes
+                </label>
 
+                <input type="number" id="bTrainEpisodes" min="1" max="5000" value="500" style="width:100%;">
+              </div>
+
+              <button class="btn" id="bTrainScenario">
+                Train on Scenario
+              </button>
+            </div>
             <div id="scenarioRunMessage">
               Scenario has not been run yet.
             </div>
@@ -1693,22 +1705,40 @@
     document.getElementById('episodeSelect').addEventListener('change', e => selectEpisode(+e.target.value));
     document.getElementById('prevBtn').addEventListener('click', () => { cur = Math.max(0, cur - 1); render(); });
     document.getElementById('nextBtn').addEventListener('click', () => { cur = Math.min(log.length - 1, cur + 1); render(); });
-    document.getElementById('playBtn').addEventListener('click', () => {
+    const playButton = document.getElementById('playBtn');
+
+    playButton.addEventListener('click', () => {
       playing = !playing;
-      document.getElementById('playBtn').textContent = playing ? '❚❚' : '▶';
-      if (playing) {
-        playTimer = setInterval(() => {
-          if (cur >= log.length - 1) {
-            const episodeSelect = document.getElementById('episodeSelect');
-            const currentEpisode = Number(episodeSelect.value);
-            const nextEpisode = (currentEpisode + 1) % episodes.length;
-            episodeSelect.value = nextEpisode;
-            selectEpisode(nextEpisode);
-          } else { cur++; render(); }
-        }, 500);
-      } else { clearInterval(playTimer); }
+
+      if (!playing) {
+        clearInterval(playTimer);
+        playTimer = null;
+        playButton.textContent = '▶';
+        return;
+      }
+
+      if (cur >= log.length - 1) {
+        cur = 0;
+        render();
+      }
+
+      playButton.textContent = '❚❚';
+
+      playTimer = setInterval(() => {
+        if (cur >= log.length - 1) {
+          playing = false;
+          clearInterval(playTimer);
+          playTimer = null;
+          playButton.textContent = '▶';
+          return;
+        }
+
+        cur++;
+        render();
+      }, 500);
     });
     document.getElementById('loadBtn').addEventListener('click', () => document.getElementById('fileInput').click());
+
     document.getElementById('fileInput').addEventListener('change', e => {
       const file = e.target.files[0];
       if (!file) return;
@@ -1756,6 +1786,12 @@
 
       if (scenarioButton) {
         scenarioButton.disabled = disabled;
+      }
+      const trainScenarioButton =
+        document.getElementById('bTrainScenario');
+
+      if (trainScenarioButton) {
+        trainScenarioButton.disabled = disabled;
       }
     }
 
@@ -2228,6 +2264,93 @@
         scenarioMessage.textContent =
           result.message
           + ' Follow the output in Command Center.';
+
+        commandOutput.textContent =
+          result.message;
+
+        taskWasRunning = true;
+
+        document.querySelector(
+          '[data-view="commandView"]'
+        ).click();
+
+        await refreshTaskStatus();
+      } catch (error) {
+        scenarioMessage.textContent =
+          error.message;
+
+        taskStatus.textContent = 'FAILED';
+        taskStatus.className =
+          'task-status failed';
+
+        commandOutput.textContent =
+          error.message;
+
+        disableTaskButtons(false);
+      }
+    });
+    document.getElementById(
+      'bTrainScenario'
+    ).addEventListener('click', async () => {
+      const scenarioMessage =
+        document.getElementById(
+          'scenarioRunMessage'
+        );
+
+      const episodes = Number.parseInt(
+        document.getElementById(
+          'bTrainEpisodes'
+        ).value,
+        10
+      );
+
+      if (
+        !Number.isInteger(episodes)
+        || episodes < 1
+        || episodes > 5000
+      ) {
+        scenarioMessage.textContent =
+          'Training episodes must be between 1 and 5000.';
+        return;
+      }
+
+      disableTaskButtons(true);
+
+      taskStatus.textContent = 'STARTING';
+      taskStatus.className =
+        'task-status running';
+
+      scenarioMessage.textContent =
+        `Starting ${episodes}-episode training...`;
+
+      try {
+        const response = await fetch(
+          '/api/train-scenario',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              scenario: buildScenarioJSON(),
+              episodes,
+            }),
+          }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.message
+            || result.error
+            || 'Scenario training could not start.'
+          );
+        }
+
+        scenarioMessage.textContent =
+          result.message
+          + ' Follow the training in Command Center.';
 
         commandOutput.textContent =
           result.message;

@@ -166,6 +166,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.run_scenario(payload)
                 return
 
+            if path == "/api/train-scenario":
+                self.train_scenario(payload)
+                return
+
             if path == "/api/stop":
                 self.stop_task()
                 return
@@ -199,6 +203,59 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         started, message = task_runner.start(
             task_name,
             [sys.executable, "-u", str(script_path)],
+        )
+
+        self.send_json(
+            {
+                "started": started,
+                "message": message,
+            },
+            status=202 if started else 409,
+        )
+
+    def train_scenario(self, payload):
+        scenario = payload.get("scenario")
+        episodes = payload.get("episodes", 500)
+
+        if not isinstance(scenario, dict):
+            raise ValueError(
+                "A valid scenario object is required."
+            )
+
+        if (
+            isinstance(episodes, bool)
+            or not isinstance(episodes, int)
+            or episodes < 1
+            or episodes > 5000
+        ):
+            raise ValueError(
+                "Training episodes must be between 1 and 5000."
+            )
+
+        SCENARIO_PATH.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        SCENARIO_PATH.write_text(
+            json.dumps(scenario, indent=2),
+            encoding="utf-8",
+        )
+
+        command = [
+            sys.executable,
+            "-u",
+            str(ROOT / "run_scenario.py"),
+            str(SCENARIO_PATH),
+            "--policy",
+            "dqn",
+            "--train-episodes",
+            str(episodes),
+        ]
+
+        started, message = task_runner.start(
+            "Custom scenario training",
+            command,
         )
 
         self.send_json(
