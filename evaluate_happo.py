@@ -118,10 +118,24 @@ def get_position(agent):
         state = agent.state
 
         if hasattr(state, "position"):
-            return state.position
+            position = state.position
+
+            if hasattr(position, "x") and hasattr(position, "y"):
+                return (
+                    position.x,
+                    position.y,
+                )
+
+            if isinstance(position, (tuple, list)):
+                return tuple(position)
+
+            return position
 
         if hasattr(state, "x") and hasattr(state, "y"):
-            return (state.x, state.y)
+            return (
+                state.x,
+                state.y,
+            )
 
     except Exception:
         pass
@@ -200,10 +214,19 @@ def evaluate():
         # --------------------------------------------------
 
         if episode == 1:
+
             print()
             print("=" * 60)
-            print("FIRST EPISODE DIAGNOSTIC")
+            print("FIRST EPISODE FULL DIAGNOSTIC")
             print("=" * 60)
+
+            print(
+                f"Strike Point: "
+                f"({env.strike_point.x}, "
+                f"{env.strike_point.y})"
+            )
+
+            print("-" * 60)
 
         while not done:
 
@@ -251,8 +274,14 @@ def evaluate():
             # ------------------------------------------
 
             total_reward += float(reward)
-            total_scout_reward += scout_reward
-            total_hunter_reward += hunter_reward
+
+            total_scout_reward += (
+                scout_reward
+            )
+
+            total_hunter_reward += (
+                hunter_reward
+            )
 
             steps += 1
 
@@ -263,7 +292,10 @@ def evaluate():
             if (
                 info.get("lethal_hit", False)
                 or
-                info.get("hunter_lethal_hit", False)
+                info.get(
+                    "hunter_lethal_hit",
+                    False,
+                )
             ):
                 episode_radar_failure = True
 
@@ -271,21 +303,65 @@ def evaluate():
             # Mission status
             # ------------------------------------------
 
-            if info.get("mission_success", False):
+            if info.get(
+                "mission_success",
+                False,
+            ):
                 episode_mission_success = True
 
-            if info.get("mission_failed", False):
+            if info.get(
+                "mission_failed",
+                False,
+            ):
                 episode_mission_failed = True
 
             # ------------------------------------------
-            # First episode diagnostic
+            # FIRST EPISODE FULL DIAGNOSTIC
             # ------------------------------------------
 
-            if episode == 1 and steps <= 20:
+            if episode == 1:
 
-                radar_status = info.get(
-                    "radar_status",
+                scout_position = get_position(
+                    env.scout
+                )
+
+                hunter_position = get_position(
+                    env.hunter
+                )
+
+                strike_point = (
+                    env.strike_point.x,
+                    env.strike_point.y,
+                )
+
+                escort_distance = info.get(
+                    "escort_distance",
                     "N/A",
+                )
+
+                escort_in_range = info.get(
+                    "escort_in_range",
+                    "N/A",
+                )
+
+                target_reached = info.get(
+                    "target_reached",
+                    False,
+                )
+
+                target_reached_this_step = info.get(
+                    "target_reached_this_step",
+                    False,
+                )
+
+                mission_success = info.get(
+                    "mission_success",
+                    False,
+                )
+
+                mission_failed = info.get(
+                    "mission_failed",
+                    False,
                 )
 
                 termination_reason = info.get(
@@ -295,23 +371,83 @@ def evaluate():
 
                 print(
                     f"Step {steps:3d} | "
-                    f"Scout Action: {scout_action} | "
-                    f"Hunter Action: {hunter_action} | "
-                    f"Reward: {float(reward):6.2f} | "
-                    f"Scout R: {scout_reward:6.2f} | "
-                    f"Hunter R: {hunter_reward:6.2f}"
+                    f"Scout={scout_position} | "
+                    f"Hunter={hunter_position} | "
+                    f"S_A={scout_action} | "
+                    f"H_A={hunter_action} | "
+                    f"R={float(reward):6.2f} | "
+                    f"SR={scout_reward:6.2f} | "
+                    f"HR={hunter_reward:6.2f} | "
+                    f"Escort={escort_distance!s:>6} | "
+                    f"InRange={str(escort_in_range):5} | "
+                    f"Target={str(target_reached):5} | "
+                    f"ReachedNow={str(target_reached_this_step):5} | "
+                    f"Success={str(mission_success):5} | "
+                    f"Done={str(done):5}"
                 )
 
-                if steps <= 3 or done:
+                if done:
+
                     print(
-                        f"          Radar: "
-                        f"{radar_status} | "
-                        f"Mission Success: "
-                        f"{info.get('mission_success', False)} | "
-                        f"Mission Failed: "
-                        f"{info.get('mission_failed', False)} | "
-                        f"Termination: "
+                        "-" * 60
+                    )
+
+                    print(
+                        "TERMINATION"
+                    )
+
+                    print(
+                        f"Reason          : "
                         f"{termination_reason}"
+                    )
+
+                    print(
+                        f"Scout Position  : "
+                        f"{scout_position}"
+                    )
+
+                    print(
+                        f"Hunter Position : "
+                        f"{hunter_position}"
+                    )
+
+                    print(
+                        f"Strike Point    : "
+                        f"{strike_point}"
+                    )
+
+                    print(
+                        f"Escort Distance : "
+                        f"{escort_distance}"
+                    )
+
+                    print(
+                        f"Escort In Range : "
+                        f"{escort_in_range}"
+                    )
+
+                    print(
+                        f"Target Reached  : "
+                        f"{target_reached}"
+                    )
+
+                    print(
+                        f"Mission Success : "
+                        f"{mission_success}"
+                    )
+
+                    print(
+                        f"Mission Failed  : "
+                        f"{mission_failed}"
+                    )
+
+                    print(
+                        f"Total Steps     : "
+                        f"{steps}"
+                    )
+
+                    print(
+                        "-" * 60
                     )
 
         # --------------------------------------------------
@@ -485,3 +621,4 @@ def evaluate():
 
 if __name__ == "__main__":
     evaluate()
+

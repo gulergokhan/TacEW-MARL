@@ -26,9 +26,11 @@ VALUE_COEF = 0.5
 PPO_EPOCHS = 10
 MINIBATCH_SIZE = 64
 
+# Reward shaping
+
 # Training
 ROLLOUT_LENGTH = 256
-NUM_EPISODES = 1000
+NUM_EPISODES = 3000
 
 # Device
 DEVICE = "cpu"
