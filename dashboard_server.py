@@ -110,6 +110,40 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             **kwargs,
         )
 
+    def end_headers(self):
+        origin = self.headers.get("Origin")
+
+        if origin == "null":
+            self.send_header(
+                "Access-Control-Allow-Origin",
+                origin,
+            )
+        elif origin:
+            parsed_origin = urlparse(origin)
+
+            if parsed_origin.hostname in {
+                "127.0.0.1",
+                "localhost",
+            }:
+                self.send_header(
+                    "Access-Control-Allow-Origin",
+                    origin,
+                )
+
+        self.send_header(
+            "Access-Control-Allow-Methods",
+            "GET, POST, OPTIONS",
+        )
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type",
+        )
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.end_headers()
+
     def send_json(self, payload, status=200):
         encoded = json.dumps(payload).encode("utf-8")
 
@@ -186,7 +220,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 elif algorithm == "happo":
                     self.start_script(
                         (
-                            "HAPPO training from scratch"
+                            "HAPPO guided-scratch training"
                             if training_mode == "scratch"
                             else "HAPPO resume and repair"
                         ),
@@ -229,6 +263,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
             if path == "/api/run-scenario":
                 self.run_scenario(payload)
+                return
+
+            if path == "/api/train-scenario":
+                self.train_scenario(payload)
                 return
 
             if path == "/api/stop":
@@ -274,6 +312,59 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 str(script_path),
                 *map(str, script_arguments),
             ],
+        )
+
+        self.send_json(
+            {
+                "started": started,
+                "message": message,
+            },
+            status=202 if started else 409,
+        )
+
+    def train_scenario(self, payload):
+        scenario = payload.get("scenario")
+        episodes = payload.get("episodes", 500)
+
+        if not isinstance(scenario, dict):
+            raise ValueError(
+                "A valid scenario object is required."
+            )
+
+        if (
+            isinstance(episodes, bool)
+            or not isinstance(episodes, int)
+            or episodes < 1
+            or episodes > 5000
+        ):
+            raise ValueError(
+                "Training episodes must be between 1 and 5000."
+            )
+
+        SCENARIO_PATH.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        SCENARIO_PATH.write_text(
+            json.dumps(scenario, indent=2),
+            encoding="utf-8",
+        )
+
+        command = [
+            sys.executable,
+            "-u",
+            str(ROOT / "run_scenario.py"),
+            str(SCENARIO_PATH),
+            "--policy",
+            "dqn",
+            "--train-episodes",
+            str(episodes),
+        ]
+
+        started, message = task_runner.start(
+            "Custom scenario training",
+            command,
         )
 
         self.send_json(

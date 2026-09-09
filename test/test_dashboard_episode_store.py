@@ -54,9 +54,10 @@ class TestDashboardEpisodeStore(unittest.TestCase):
                 patch.object(store, "JS_PATH", js_path),
             ):
                 merged = store.replace_episode_group(
-                    [{"label": "HAPPO Final Policy"}],
+                    [{"label": "HAPPO Best Policy"}],
                     (
                         "HAPPO Training Episode",
+                        "HAPPO Best Policy",
                         "HAPPO Final Policy",
                     ),
                 )
@@ -67,7 +68,7 @@ class TestDashboardEpisodeStore(unittest.TestCase):
                 [
                     "DQN Training Episode 50",
                     "Custom scenario (dqn)",
-                    "HAPPO Final Policy",
+                    "HAPPO Best Policy",
                 ],
             )
 

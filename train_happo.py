@@ -634,20 +634,21 @@ def publish_happo_dashboard_episodes(
     training_mode,
     completed_episodes,
 ):
-    """Publish sampled training sorties plus the restored final policy."""
+    """Publish sampled sorties plus the restored best policy."""
 
-    final_episode = collect_dashboard_episode(
+    best_episode = collect_dashboard_episode(
         happo,
         (
-            "HAPPO Final Policy + Tactical Guard "
+            "HAPPO Best Policy + Tactical Guard "
             f"({training_mode}, episode {completed_episodes})"
         ),
     )
-    episodes = list(training_episodes) + [final_episode]
+    episodes = list(training_episodes) + [best_episode]
     replace_episode_group(
         episodes,
         (
             "HAPPO Training Episode",
+            "HAPPO Best Policy",
             "HAPPO Final Policy",
         ),
     )
@@ -970,6 +971,18 @@ def main(training_mode="scratch"):
     print(f"Episodes         : {cfg.NUM_EPISODES}")
     print(f"Device           : {cfg.DEVICE}")
     print(f"Training mode    : {training_mode}")
+    if (
+        training_mode == "scratch"
+        and cfg.SCRATCH_GUIDED_WARMUP_ENABLED
+    ):
+        print(
+            "Training pipeline: random initialization -> "
+            "guided expert warmup -> RL episodes"
+        )
+        print(
+            "Success rates shown for episodes are measured "
+            "after guided warmup."
+        )
     print(f"Best checkpoint  : {training_paths['best']}")
     print("=" * 60)
 
