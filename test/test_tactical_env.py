@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 from terrain.models import TerrainType
 
+from configs import environment_config as cfg
 from environment.tactical_env import TacticalEnv
 from weather.models import WeatherState
 
@@ -159,6 +160,37 @@ class TestTacticalEnv(unittest.TestCase):
             first_timer - 1,
         )
 
+    def test_suppression_moves_to_next_available_radar(self):
+        self.env.scout.move(4, 6)
+        first_radar = self.env.radar_system.get_radar(
+            "radar_01"
+        )
+        second_radar = self.env.radar_system.get_radar(
+            "radar_02"
+        )
+
+        with patch(
+            "radar.radar.random.random",
+            return_value=1.0,
+        ):
+            self.env.step(
+                self.env.ACTION_JAM_SUPPRESS,
+                hunter_action=self.env.ACTION_STAY,
+            )
+            self.env.step(
+                self.env.ACTION_JAM_SUPPRESS,
+                hunter_action=self.env.ACTION_STAY,
+            )
+
+        self.assertGreater(
+            first_radar.suppression_timer,
+            0,
+        )
+        self.assertGreater(
+            second_radar.suppression_timer,
+            0,
+        )
+
     def test_episode_log_can_be_exported(self):
         self.env.step(self.env.ACTION_RIGHT)
 
@@ -224,6 +256,80 @@ class TestTacticalEnv(unittest.TestCase):
         self.assertEqual(
             info["termination_reason"],
             "mission_success",
+        )
+
+    def test_fuel_exhaustion_has_terminal_penalty(self):
+        env = TacticalEnv(
+            weather=clear_weather(),
+            radars_config=[],
+        )
+        env.reset()
+        env.scout.state.fuel = 1.0
+        env.hunter.state.fuel = 1.0
+
+        _, reward, done, info = env.step(
+            env.ACTION_STAY,
+            hunter_action=env.ACTION_STAY,
+        )
+
+        self.assertTrue(done)
+        self.assertEqual(
+            info["termination_reason"],
+            "fuel_exhausted",
+        )
+        self.assertLess(reward, 0.0)
+        self.assertLessEqual(
+            reward,
+            cfg.FUEL_EXHAUSTED_PENALTY
+            + cfg.ESCORT_REWARD,
+        )
+
+    def test_time_limit_has_terminal_penalty(self):
+        env = TacticalEnv(
+            weather=clear_weather(),
+            radars_config=[],
+        )
+        env.reset()
+        env.max_steps = 1
+
+        _, reward, done, info = env.step(
+            env.ACTION_STAY,
+            hunter_action=env.ACTION_STAY,
+        )
+
+        self.assertTrue(done)
+        self.assertEqual(
+            info["termination_reason"],
+            "time_limit",
+        )
+        self.assertLess(reward, 0.0)
+        self.assertLessEqual(
+            reward,
+            cfg.TIME_LIMIT_PENALTY
+            + cfg.ESCORT_REWARD,
+        )
+
+    def test_unescorted_hunter_target_is_penalized(self):
+        self.env.scout.move(7, 7)
+        self.env.hunter.move(2, 8)
+
+        with patch(
+            "radar.radar.random.random",
+            return_value=1.0,
+        ):
+            _, reward, done, info = self.env.step(
+                self.env.ACTION_STAY,
+                hunter_action=self.env.ACTION_LEFT,
+            )
+
+        self.assertTrue(done)
+        self.assertLess(reward, 0.0)
+        self.assertFalse(info["mission_success"])
+        self.assertTrue(info["mission_failed"])
+        self.assertFalse(info["escort_in_range"])
+        self.assertEqual(
+            info["termination_reason"],
+            "hunter_reached_target",
         )
 
     def test_hunter_lethal_ends_mission_as_failure(self):
@@ -594,6 +700,35 @@ class TestTacticalEnv(unittest.TestCase):
         self.assertLess(
             hunter_radar_info["reward_hunter"],
             no_radar_info["reward_hunter"],
+        )
+
+    def test_hunter_action_cost_is_in_shared_reward(self):
+        def run_step(hunter_action):
+            env = TacticalEnv(
+                weather=clear_weather(),
+                radars_config=[],
+            )
+            env.reset()
+
+            _, reward, _, info = env.step(
+                env.ACTION_STAY,
+                hunter_action=hunter_action,
+            )
+
+            return reward, info
+
+        stay_reward, stay_info = run_step(
+            self.env.ACTION_STAY
+        )
+        jam_reward, jam_info = run_step(
+            self.env.ACTION_JAM_SUPPRESS
+        )
+
+        self.assertLess(jam_reward, stay_reward)
+        self.assertAlmostEqual(
+            jam_reward - stay_reward,
+            jam_info["reward_hunter"]
+            - stay_info["reward_hunter"],
         )
     def test_scenario_rejects_position_outside_grid(self):
         with self.assertRaisesRegex(

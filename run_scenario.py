@@ -30,6 +30,18 @@ from pathlib import Path
 
 import torch
 
+from dashboard_episode_store import (
+    load_dashboard_episodes,
+    save_dashboard_episodes,
+)
+from evaluate_happo import (
+    get_ctde_observations as get_happo_observations,
+    load_best_model as load_best_happo_model,
+    resolve_happo_model_path,
+    select_deterministic_actions as select_happo_actions,
+)
+from marl.algorithms.happo import HAPPO
+from marl.execution import select_guarded_dqn_actions
 from environment.tactical_env import TacticalEnv
 from evaluate_tactical_dqn import (
     DEFAULT_MODEL_PATH,
@@ -37,9 +49,43 @@ from evaluate_tactical_dqn import (
 )
 
 MAX_CUSTOM_DASHBOARD_EPISODES = 20
+CUSTOM_SCENARIO_POLICY_PREFIXES = (
+    "Custom scenario (trained dqn",
+    "Custom scenario (happo",
+    "Custom scenario (heuristic",
+    "Custom scenario (dqn",
+)
 CUSTOM_MODEL_PATH = (
     Path(__file__).resolve().parent / "models" / "custom_scenario_dqn.pth"
 )
+
+
+def keep_latest_custom_scenario_per_policy(episodes):
+    """Keep only the latest playback for each known policy type."""
+
+    seen_policies = set()
+    retained_reversed = []
+
+    for episode in reversed(episodes):
+        label = str(episode.get("label", ""))
+        policy_prefix = next(
+            (
+                prefix
+                for prefix in CUSTOM_SCENARIO_POLICY_PREFIXES
+                if label.startswith(prefix)
+            ),
+            None,
+        )
+
+        if policy_prefix is not None:
+            if policy_prefix in seen_policies:
+                continue
+
+            seen_policies.add(policy_prefix)
+
+        retained_reversed.append(episode)
+
+    return list(reversed(retained_reversed))
 
 
 def scripted_scout_policy(env, rng):
@@ -80,7 +126,7 @@ def parse_args():
 
     parser.add_argument(
         "--policy",
-        choices=("dqn", "heuristic"),
+        choices=("dqn","happo", "heuristic"),
         default="dqn",
     )
 
@@ -314,7 +360,9 @@ def main():
 
     env = TacticalEnv.from_scenario(scenario)
 
-    agent = None
+    dqn_agent = None
+    happo_agent = None
+    happo_model_path = None
 
     if args.train_episodes < 0:
         raise ValueError("--train-episodes cannot be negative.")
@@ -323,9 +371,21 @@ def main():
         raise ValueError("Scenario training requires the dqn policy.")
 
     if args.policy == "dqn":
-        agent = load_agent(
+        dqn_agent = load_agent(
             env,
             args.model,
+        )
+
+    elif args.policy == "happo":
+        happo_agent = HAPPO()
+        happo_model_path = resolve_happo_model_path()
+        load_best_happo_model(
+            happo_agent,
+            model_path=happo_model_path,
+        )
+        print(
+            f"HAPPO model: {happo_model_path}",
+            flush=True,
         )
 
     if args.train_episodes > 0:
@@ -338,7 +398,7 @@ def main():
         )
 
         train_on_scenario(
-            agent,
+            dqn_agent,
             env,
             args.train_episodes,
         )
@@ -349,7 +409,7 @@ def main():
         )
 
         torch.save(
-            agent.model.state_dict(),
+            dqn_agent.model.state_dict(),
             args.output_model,
         )
 
@@ -363,11 +423,34 @@ def main():
     done = False
 
     while not done:
-        if agent is not None:
-            scout_action = agent.select_action(
+        hunter_action = None
+
+        if dqn_agent is not None:
+            scout_action = dqn_agent.select_action(
                 observation,
                 training=False,
             )
+            scout_action, hunter_action = (
+                select_guarded_dqn_actions(
+                    env,
+                    scout_action,
+                )
+            )
+
+        elif happo_agent is not None:
+            scout_obs, hunter_obs = (
+                get_happo_observations(env)
+            )
+
+            scout_action, hunter_action = (
+                select_happo_actions(
+                    happo_agent,
+                    scout_obs,
+                    hunter_obs,
+                    env=env,
+                )
+            )
+
         else:
             scout_action = scripted_scout_policy(
                 env,
@@ -375,51 +458,31 @@ def main():
             )
 
         observation, _, done, _ = env.step(
-            scout_action,
-            hunter_action=None,
+            scout_action=scout_action,
+            hunter_action=hunter_action,
         )
 
     policy_label = "trained dqn" if args.train_episodes > 0 else args.policy
 
     new_episode = {
-        "label": (f"Custom scenario ({policy_label}) — " f"{scenario_path.name}"),
+        "label": (
+            f"Custom scenario ({policy_label}"
+            + (
+                " + tactical guard"
+                if args.policy in {"dqn", "happo"}
+                else ""
+            )
+            + (
+                f" · {happo_model_path.stem}"
+                if happo_model_path is not None
+                else ""
+            )
+            + ") — "
+            f"{scenario_path.name}"
+        ),
         "steps": env.episode_log,
     }
-
-    json_output_path = Path("dashboard_logs/tactical_episodes.json")
-    js_output_path = Path("dashboard_logs/tactical_episodes.js")
-
-    existing_episodes = []
-
-    source_path = json_output_path if json_output_path.exists() else js_output_path
-
-    if source_path.exists():
-        try:
-            text = source_path.read_text(encoding="utf-8")
-
-            if source_path.suffix == ".js":
-                _, separator, json_text = text.partition("=")
-
-                if not separator:
-                    raise ValueError("Invalid dashboard episode file")
-
-                text = json_text.strip().rstrip(";")
-
-            existing_payload = json.loads(text)
-            existing_episodes = existing_payload.get("episodes", [])
-
-            if not isinstance(
-                existing_episodes,
-                list,
-            ):
-                raise ValueError("Dashboard episodes must be a list")
-
-        except (
-            OSError,
-            ValueError,
-            json.JSONDecodeError,
-        ):
-            existing_episodes = []
+    existing_episodes = load_dashboard_episodes()
 
     training_episodes = [
         episode
@@ -434,29 +497,17 @@ def main():
     ]
 
     custom_episodes.append(new_episode)
+    custom_episodes = (
+        keep_latest_custom_scenario_per_policy(
+            custom_episodes
+        )
+    )
 
     existing_episodes = (
         training_episodes + custom_episodes[-MAX_CUSTOM_DASHBOARD_EPISODES:]
     )
 
-    payload = {
-        "episodes": existing_episodes,
-    }
-
-    json_output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    json_output_path.write_text(
-        json.dumps(payload, indent=2),
-        encoding="utf-8",
-    )
-
-    js_output_path.write_text(
-        "window.TACEW_EPISODES = " + json.dumps(payload) + ";\n",
-        encoding="utf-8",
-    )
+    save_dashboard_episodes(existing_episodes)
 
     outcome = new_episode["steps"][-1].get("termination_reason")
 
