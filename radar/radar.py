@@ -318,8 +318,10 @@ class RadarSystem:
         self,
         position: Position,
         max_range: float = None,
+        exclude_suppressed: bool = False,
+        exclude_deceived: bool = False,
     ):
-        """Returns the nearest active radar to `position`, optionally range-limited."""
+        """Return the nearest active radar matching the jam filters."""
 
         nearest = None
         nearest_distance = float("inf")
@@ -327,6 +329,18 @@ class RadarSystem:
         for radar in self.radars:
 
             if not radar.active:
+                continue
+
+            if (
+                exclude_suppressed
+                and radar.suppression_timer > 0
+            ):
+                continue
+
+            if (
+                exclude_deceived
+                and radar.deception_timer > 0
+            ):
                 continue
 
             distance = self.distance(radar.position, position)

@@ -1,12 +1,22 @@
 import numpy as np
 import torch
+from pathlib import Path
 
 from environment.tactical_env import TacticalEnv
 from marl.algorithms.happo import HAPPO
+from marl.execution import (
+    apply_hunter_progress_guard,
+    apply_scout_jamming_guard,
+)
 from configs import marl_config as cfg
 
 
 MODEL_PATH = "models/happo_best.pth"
+FINAL_MODEL_CANDIDATES = (
+    Path("models/happo_scratch_final.pth"),
+    Path("models/happo_final.pth"),
+    Path("models/happo_best.pth"),
+)
 NUM_EPISODES = 100
 
 
@@ -24,14 +34,40 @@ def get_ctde_observations(env):
     )
 
 
-def load_best_model(happo):
+def resolve_happo_model_path(model_path=None):
+    """Return an explicit model or the newest completed HAPPO model."""
+
+    if model_path is not None:
+        return Path(model_path)
+
+    available_models = [
+        path
+        for path in FINAL_MODEL_CANDIDATES
+        if path.exists()
+    ]
+
+    if not available_models:
+        return Path(MODEL_PATH)
+
+    return max(
+        available_models,
+        key=lambda path: path.stat().st_mtime_ns,
+    )
+
+
+def load_best_model(happo, model_path=None):
     """
-    Load the trained HAPPO checkpoint.
+    Load the newest completed HAPPO checkpoint by default.
     """
 
+    resolved_model_path = resolve_happo_model_path(
+        model_path
+    )
+
     checkpoint = torch.load(
-        MODEL_PATH,
+        resolved_model_path,
         map_location=happo.device,
+        weights_only=True,
     )
 
     happo.scout_actor.load_state_dict(
@@ -59,6 +95,7 @@ def select_deterministic_actions(
     happo,
     scout_obs,
     hunter_obs,
+    env=None,
 ):
     """
     Deterministic decentralized execution.
@@ -106,7 +143,21 @@ def select_deterministic_actions(
             dim=-1,
         ).item()
 
-    return int(scout_action), int(hunter_action)
+    scout_action = int(scout_action)
+    hunter_action = int(hunter_action)
+
+    if env is not None:
+        scout_action = apply_scout_jamming_guard(
+            env,
+            scout_action,
+        )
+        hunter_action = apply_hunter_progress_guard(
+            env,
+            scout_action,
+            hunter_action,
+        )
+
+    return scout_action, hunter_action
 
 
 def get_position(agent):
@@ -145,13 +196,16 @@ def get_position(agent):
 
 def evaluate():
 
+    model_path = resolve_happo_model_path()
+
     print("=" * 60)
     print("TALON - HAPPO EVALUATION")
     print("=" * 60)
 
-    print(f"Model             : {MODEL_PATH}")
+    print(f"Model             : {model_path}")
     print(f"Episodes          : {NUM_EPISODES}")
     print("Exploration       : OFF")
+    print("Execution         : HAPPO actors + tactical guards")
     print(f"Device            : {cfg.DEVICE}")
     print("=" * 60)
 
@@ -162,16 +216,34 @@ def evaluate():
     env = TacticalEnv()
     happo = HAPPO()
 
-    checkpoint = load_best_model(happo)
+    checkpoint = load_best_model(
+        happo,
+        model_path=model_path,
+    )
 
     print(
         f"Training episode  : "
         f"{checkpoint.get('episode', 'N/A')}"
     )
 
+    training_score = checkpoint.get(
+        "best_average_reward",
+        checkpoint.get("best_reward", "N/A"),
+    )
+
+    training_success = checkpoint.get(
+    "best_success_rate",
+    "N/A",
+    )
+
     print(
-        f"Training reward   : "
-        f"{checkpoint.get('best_reward', 'N/A')}"
+        f"Training avg reward: "
+        f"{training_score}"
+    )
+
+    print(
+    f"Training success : "
+    f"{training_success}"
     )
 
     print("-" * 60)
@@ -243,6 +315,7 @@ def evaluate():
                     happo,
                     scout_obs,
                     hunter_obs,
+                    env=env,
                 )
             )
 
@@ -344,12 +417,14 @@ def evaluate():
                     "N/A",
                 )
 
-                target_reached = info.get(
+                hunter_info = info.get("hunter", {})
+
+                target_reached = hunter_info.get(
                     "target_reached",
                     False,
                 )
 
-                target_reached_this_step = info.get(
+                target_reached_this_step = hunter_info.get(
                     "target_reached_this_step",
                     False,
                 )
@@ -621,4 +696,3 @@ def evaluate():
 
 if __name__ == "__main__":
     evaluate()
-

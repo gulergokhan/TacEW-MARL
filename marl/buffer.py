@@ -60,21 +60,5 @@ class MARLRolloutBuffer:
     def __len__(self):
         return len(self.data["rewards"])
 
-    def clear(self):
-        self.data = {
-            "scout_obs": [],
-            "hunter_obs": [],
-            "global_state": [],
-            "scout_actions": [],
-            "hunter_actions": [],
-            "scout_log_probs": [],
-            "hunter_log_probs": [],
-            "rewards": [],
-            "scout_rewards": [],
-            "hunter_rewards": [],
-            "values": [],
-            "dones": [],
-        }
-
     def get(self):
         return self.data

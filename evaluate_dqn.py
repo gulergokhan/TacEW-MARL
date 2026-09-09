@@ -267,7 +267,8 @@ def main():
 
     checkpoint = torch.load(
         MODEL_PATH,
-        map_location="cpu"
+        map_location="cpu",
+        weights_only=True,
     )
 
     state_dict = extract_state_dict(

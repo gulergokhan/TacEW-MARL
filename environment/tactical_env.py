@@ -713,13 +713,13 @@ class TacticalEnv:
         )
 
         # ==================================================
-        # HUNTER PROGRESS -> SHARED REWARD
+        # HUNTER ACTION OUTCOME -> SHARED REWARD
         # ==================================================
         #
-        # HAPPO currently learns from shared reward.
-        #
-        # Therefore Hunter's progress toward the strike
-        # point is explicitly added to the shared reward.
+        # HAPPO learns from the shared team reward. Include
+        # Hunter progress as well as invalid/jamming action
+        # costs so those decisions cannot be hidden from
+        # the cooperative learning signal.
         #
 
         hunter_progress_reward = (
@@ -727,7 +727,7 @@ class TacticalEnv:
             * cfg.HUNTER_PROGRESS_REWARD
         )
 
-        reward += hunter_progress_reward
+        reward += hunter_reward
 
         # ==================================================
         # ESCORT
@@ -977,17 +977,40 @@ class TacticalEnv:
 
         elif hunter_reached_target:
 
+            reward += (
+                cfg.UNESCORTED_TARGET_PENALTY
+            )
+
+            scout_reward += (
+                cfg.UNESCORTED_TARGET_PENALTY
+            )
+
+            hunter_reward += (
+                cfg.UNESCORTED_TARGET_PENALTY
+            )
+
             done = True
 
             termination_reason = (
                 "hunter_reached_target"
             )
-
         # ==================================================
         # FUEL
         # ==================================================
 
         elif fuel_exhausted:
+
+            reward += (
+                cfg.FUEL_EXHAUSTED_PENALTY
+            )
+
+            scout_reward += (
+                cfg.FUEL_EXHAUSTED_PENALTY
+            )
+
+            hunter_reward += (
+                cfg.FUEL_EXHAUSTED_PENALTY
+            )
 
             done = True
 
@@ -1000,6 +1023,18 @@ class TacticalEnv:
         # ==================================================
 
         elif time_limit_reached:
+
+            reward += (
+                cfg.TIME_LIMIT_PENALTY
+            )
+
+            scout_reward += (
+                cfg.TIME_LIMIT_PENALTY
+            )
+
+            hunter_reward += (
+                cfg.TIME_LIMIT_PENALTY
+            )
 
             done = True
 
@@ -1284,8 +1319,24 @@ class TacticalEnv:
                 self.radar_system.nearest_radar(
                     self.scout.state.position,
                     max_range=cfg.JAM_RANGE,
+                    exclude_suppressed=(
+                        action
+                        == self.ACTION_JAM_SUPPRESS
+                    ),
+                    exclude_deceived=(
+                        action
+                        == self.ACTION_JAM_DECEIVE
+                    ),
                 )
             )
+
+            if target_radar is None:
+                target_radar = (
+                    self.radar_system.nearest_radar(
+                        self.scout.state.position,
+                        max_range=cfg.JAM_RANGE,
+                    )
+                )
 
             if target_radar is None:
 
@@ -1621,12 +1672,14 @@ class TacticalEnv:
         """
         Explicit action for the learned Hunter policy.
 
-        Action space:
+        HAPPO action space:
             0 UP
             1 DOWN
             2 LEFT
             3 RIGHT
             4 STAY
+
+        Legacy direct callers may still use:
             5 JAM_SUPPRESS
             6 JAM_DECEIVE
         """
@@ -1671,7 +1724,9 @@ class TacticalEnv:
 
                 new_x += 1
 
-            # STAY intentionally keeps position unchanged.
+            if action == self.ACTION_STAY:
+
+                self.hunter_reward -= 0.15
 
             if (
                 self._is_inside_grid(
@@ -1714,8 +1769,24 @@ class TacticalEnv:
                 self.radar_system.nearest_radar(
                     self.hunter.state.position,
                     max_range=cfg.JAM_RANGE,
+                    exclude_suppressed=(
+                        action
+                        == self.ACTION_JAM_SUPPRESS
+                    ),
+                    exclude_deceived=(
+                        action
+                        == self.ACTION_JAM_DECEIVE
+                    ),
                 )
             )
+
+            if target_radar is None:
+                target_radar = (
+                    self.radar_system.nearest_radar(
+                        self.hunter.state.position,
+                        max_range=cfg.JAM_RANGE,
+                    )
+                )
 
             if target_radar is None:
 

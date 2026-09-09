@@ -58,11 +58,16 @@ class TaskRunner:
         return True, f"{task_name} started."
 
     def _collect_output(self, process):
-        if process.stdout is not None:
-            for line in process.stdout:
-                with self.lock:
-                    self.output.append(line.rstrip())
-                    self.output = self.output[-MAX_OUTPUT_LINES:]
+        output_stream = process.stdout
+
+        if output_stream is not None:
+            try:
+                for line in output_stream:
+                    with self.lock:
+                        self.output.append(line.rstrip())
+                        self.output = self.output[-MAX_OUTPUT_LINES:]
+            finally:
+                output_stream.close()
 
         return_code = process.wait()
 
@@ -149,17 +154,77 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             payload = self.read_json()
 
             if path == "/api/train":
-                self.start_script(
-                    "Tactical DQN training",
-                    ROOT / "train_tactical_dqn.py",
+                algorithm = payload.get(
+                    "algorithm",
+                    "dqn",
                 )
+                training_mode = payload.get(
+                    "training_mode",
+                    "scratch",
+                )
+
+                if training_mode not in {
+                    "scratch",
+                    "resume",
+                }:
+                    raise ValueError(
+                        "Training mode must be scratch or resume."
+                    )
+
+                if algorithm == "dqn":
+                    if training_mode != "scratch":
+                        raise ValueError(
+                            "Resume / Repair Best is currently "
+                            "available only for HAPPO."
+                        )
+
+                    self.start_script(
+                        "Tactical DQN training",
+                        ROOT / "train_tactical_dqn.py",
+                    )
+
+                elif algorithm == "happo":
+                    self.start_script(
+                        (
+                            "HAPPO training from scratch"
+                            if training_mode == "scratch"
+                            else "HAPPO resume and repair"
+                        ),
+                        ROOT / "train_happo.py",
+                        "--mode",
+                        training_mode,
+                    )
+
+                else:
+                    raise ValueError(
+                        "Algorithm must be dqn or happo."
+                    )
+
                 return
 
             if path == "/api/evaluate":
-                self.start_script(
-                    "Tactical holdout evaluation",
-                    ROOT / "evaluate_tactical_holdout.py",
+                algorithm = payload.get(
+                    "algorithm",
+                    "dqn",
                 )
+
+                if algorithm == "dqn":
+                    self.start_script(
+                        "Tactical DQN holdout evaluation",
+                        ROOT / "evaluate_tactical_holdout.py",
+                    )
+
+                elif algorithm == "happo":
+                    self.start_script(
+                        "HAPPO holdout evaluation",
+                        ROOT / "evaluate_happo_holdout.py",
+                    )
+
+                else:
+                    raise ValueError(
+                        "Algorithm must be dqn or happo."
+                    )
+
                 return
 
             if path == "/api/run-scenario":
@@ -195,10 +260,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             status=202 if stopped else 409,
         )
 
-    def start_script(self, task_name, script_path):
+    def start_script(
+        self,
+        task_name,
+        script_path,
+        *script_arguments,
+    ):
         started, message = task_runner.start(
             task_name,
-            [sys.executable, "-u", str(script_path)],
+            [
+                sys.executable,
+                "-u",
+                str(script_path),
+                *map(str, script_arguments),
+            ],
         )
 
         self.send_json(
@@ -216,8 +291,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if not isinstance(scenario, dict):
             raise ValueError("A valid scenario object is required.")
 
-        if policy not in {"dqn", "heuristic"}:
-            raise ValueError("Policy must be dqn or heuristic.")
+        if policy not in {
+            "dqn",
+            "happo",
+            "heuristic",
+        }:
+            raise ValueError(
+                "Policy must be dqn, happo or heuristic."
+            )
 
         SCENARIO_PATH.parent.mkdir(
             parents=True,

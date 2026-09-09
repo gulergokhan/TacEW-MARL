@@ -7,10 +7,10 @@ class Actor(nn.Module):
     Policy network for a MARL agent.
 
     Input:
-        87-dimensional decentralized observation
+        Agent-specific decentralized observation
 
     Output:
-        7 action logits
+        Agent-specific action logits
     """
 
     def __init__(

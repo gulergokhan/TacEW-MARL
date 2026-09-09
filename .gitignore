@@ -16,4 +16,9 @@ env/
 *.pt
 *.pth
 
+# Keep only the small deployment checkpoints reproducible. Periodic training
+# checkpoints remain local because they grow quickly and are not needed to run.
+!models/tactical_dqn_goal_aware.pth
+!models/happo_scratch_final.pth
+
 dashboard_logs/

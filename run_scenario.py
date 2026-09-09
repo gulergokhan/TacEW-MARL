@@ -23,10 +23,23 @@ radar layout.
 """
 
 import argparse
-import json
 import random
 from pathlib import Path
 
+import json
+
+from dashboard_episode_store import (
+    load_dashboard_episodes,
+    save_dashboard_episodes,
+)
+from evaluate_happo import (
+    get_ctde_observations as get_happo_observations,
+    load_best_model as load_best_happo_model,
+    resolve_happo_model_path,
+    select_deterministic_actions as select_happo_actions,
+)
+from marl.algorithms.happo import HAPPO
+from marl.execution import select_guarded_dqn_actions
 from environment.tactical_env import TacticalEnv
 from evaluate_tactical_dqn import (
     DEFAULT_MODEL_PATH,
@@ -73,7 +86,7 @@ def parse_args():
 
     parser.add_argument(
         "--policy",
-        choices=("dqn", "heuristic"),
+        choices=("dqn","happo", "heuristic"),
         default="dqn",
     )
 
@@ -111,12 +124,26 @@ def main():
 
     env = TacticalEnv.from_scenario(scenario)
 
-    agent = None
+    dqn_agent = None
+    happo_agent = None
+    happo_model_path = None
 
     if args.policy == "dqn":
-        agent = load_agent(
+        dqn_agent = load_agent(
             env,
             args.model,
+        )
+
+    elif args.policy == "happo":
+        happo_agent = HAPPO()
+        happo_model_path = resolve_happo_model_path()
+        load_best_happo_model(
+            happo_agent,
+            model_path=happo_model_path,
+        )
+        print(
+            f"HAPPO model: {happo_model_path}",
+            flush=True,
         )
 
     observation = env.reset()
@@ -124,11 +151,34 @@ def main():
     done = False
 
     while not done:
-        if agent is not None:
-            scout_action = agent.select_action(
+        hunter_action = None
+
+        if dqn_agent is not None:
+            scout_action = dqn_agent.select_action(
                 observation,
                 training=False,
             )
+            scout_action, hunter_action = (
+                select_guarded_dqn_actions(
+                    env,
+                    scout_action,
+                )
+            )
+
+        elif happo_agent is not None:
+            scout_obs, hunter_obs = (
+                get_happo_observations(env)
+            )
+
+            scout_action, hunter_action = (
+                select_happo_actions(
+                    happo_agent,
+                    scout_obs,
+                    hunter_obs,
+                    env=env,
+                )
+            )
+
         else:
             scout_action = scripted_scout_policy(
                 env,
@@ -136,69 +186,29 @@ def main():
             )
 
         observation, _, done, _ = env.step(
-            scout_action,
-            hunter_action=None,
+            scout_action=scout_action,
+            hunter_action=hunter_action,
         )
 
     new_episode = {
         "label": (
-            f"Custom scenario ({args.policy}) — "
+            f"Custom scenario ({args.policy}"
+            + (
+                " + tactical guard"
+                if args.policy in {"dqn", "happo"}
+                else ""
+            )
+            + (
+                f" · {happo_model_path.stem}"
+                if happo_model_path is not None
+                else ""
+            )
+            + ") — "
             f"{scenario_path.name}"
         ),
         "steps": env.episode_log,
     }
-    json_output_path = Path(
-        "dashboard_logs/tactical_episodes.json"
-    )
-    js_output_path = Path(
-        "dashboard_logs/tactical_episodes.js"
-    )
-
-    existing_episodes = []
-
-    source_path = (
-        json_output_path
-        if json_output_path.exists()
-        else js_output_path
-    )
-
-    if source_path.exists():
-        try:
-            text = source_path.read_text(
-                encoding="utf-8"
-            )
-
-            if source_path.suffix == ".js":
-                _, separator, json_text = (
-                    text.partition("=")
-                )
-
-                if not separator:
-                    raise ValueError(
-                        "Invalid dashboard episode file"
-                    )
-
-                text = json_text.strip().rstrip(";")
-
-            existing_payload = json.loads(text)
-            existing_episodes = (
-                existing_payload.get("episodes", [])
-            )
-
-            if not isinstance(
-                existing_episodes,
-                list,
-            ):
-                raise ValueError(
-                    "Dashboard episodes must be a list"
-                )
-
-        except (
-            OSError,
-            ValueError,
-            json.JSONDecodeError,
-        ):
-            existing_episodes = []
+    existing_episodes = load_dashboard_episodes()
 
     training_episodes = [
         episode
@@ -216,6 +226,15 @@ def main():
         ).startswith("Custom scenario")
     ]
 
+    if args.policy == "happo":
+        custom_episodes = [
+            episode
+            for episode in custom_episodes
+            if not str(
+                episode.get("label", "")
+            ).startswith("Custom scenario (happo")
+        ]
+
     custom_episodes.append(new_episode)
 
     existing_episodes = (
@@ -225,26 +244,7 @@ def main():
         ]
     )
 
-    payload = {
-        "episodes": existing_episodes,
-    }
-
-    json_output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    json_output_path.write_text(
-        json.dumps(payload, indent=2),
-        encoding="utf-8",
-    )
-
-    js_output_path.write_text(
-        "window.TACEW_EPISODES = "
-        + json.dumps(payload)
-        + ";\n",
-        encoding="utf-8",
-    )
+    save_dashboard_episodes(existing_episodes)
 
     outcome = new_episode["steps"][-1].get(
         "termination_reason"

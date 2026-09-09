@@ -18,12 +18,13 @@ class HAPPO:
     Actors receive decentralized observations.
     Critic receives the centralized global state.
 
-    Each actor uses its own agent-specific reward for GAE.
-    The centralized critic is trained on the shared/global reward.
+    Both actors and the centralized critic learn from the shared
+    team reward. Agent-specific rewards are retained for diagnostics.
     """
 
     def __init__(self):
         self.device = torch.device(cfg.DEVICE)
+        self.entropy_coef = cfg.ENTROPY_COEF
 
         # --------------------------------------------------
         # Actors
@@ -31,13 +32,13 @@ class HAPPO:
 
         self.scout_actor = Actor(
             observation_dim=cfg.SCOUT_OBS_DIM,
-            action_dim=cfg.ACTION_DIM,
+            action_dim=cfg.SCOUT_ACTION_DIM,
             hidden_dim=cfg.HIDDEN_DIM,
         ).to(self.device)
 
         self.hunter_actor = Actor(
             observation_dim=cfg.HUNTER_OBS_DIM,
-            action_dim=cfg.ACTION_DIM,
+            action_dim=cfg.HUNTER_ACTION_DIM,
             hidden_dim=cfg.HIDDEN_DIM,
         ).to(self.device)
 
@@ -69,12 +70,16 @@ class HAPPO:
             lr=cfg.LEARNING_RATE_CRITIC,
         )
 
+    def set_entropy_coef(self, value):
+        """Update the exploration bonus used by actor losses."""
+        self.entropy_coef = float(value)
+
     # ==================================================
     # GAE
     # ==================================================
 
     @staticmethod
-    def compute_gae(rewards, values, dones):
+    def compute_gae(rewards, values, dones, next_value=0.0,):
         """
         Generalized Advantage Estimation.
 
@@ -106,7 +111,7 @@ class HAPPO:
         )
 
         gae = 0.0
-        next_value = 0.0
+
 
         for step in reversed(range(len(rewards))):
 
@@ -141,7 +146,8 @@ class HAPPO:
     @staticmethod
     def normalize_advantages(advantages):
         """
-        Normalize advantages independently for each agent.
+        Avantajları güvenli biçimde normalize eder.
+        Tek elemanlı rollout durumunda NaN oluşmasını engeller.
         """
 
         advantages = torch.as_tensor(
@@ -150,19 +156,19 @@ class HAPPO:
         )
 
         if advantages.numel() <= 1:
-            return advantages
+            return torch.zeros_like(advantages)
 
         return (
             advantages - advantages.mean()
         ) / (
-            advantages.std() + 1e-8
+            advantages.std(unbiased=False) + 1e-8
         )
 
     # ==================================================
     # Tensor preparation
     # ==================================================
 
-    def _prepare_batch(self, rollout):
+    def _prepare_batch(self, rollout, next_value=0.0,):
 
         scout_obs = torch.as_tensor(
             np.asarray(
@@ -216,52 +222,22 @@ class HAPPO:
         # Shared reward
         # --------------------------------------------------
 
+        # HAPPO tam iş birlikçi bir görevde ortak ödülü kullanır.
         shared_rewards = rollout["rewards"]
-
-        # --------------------------------------------------
-        # Agent-specific rewards
-        # --------------------------------------------------
-
-        scout_rewards = rollout["scout_rewards"]
-
-        hunter_rewards = rollout["hunter_rewards"]
-
         values = rollout["values"]
-
         dones = rollout["dones"]
-
-        # --------------------------------------------------
-        # Central critic:
-        # shared reward -> shared advantage / return
-        # --------------------------------------------------
 
         shared_advantages, returns = self.compute_gae(
             shared_rewards,
             values,
             dones,
+            next_value=next_value,
         )
 
-        # --------------------------------------------------
-        # Scout:
-        # scout reward -> scout advantage
-        # --------------------------------------------------
-
-        scout_advantages, _ = self.compute_gae(
-            scout_rewards,
-            values,
-            dones,
-        )
-
-        # --------------------------------------------------
-        # Hunter:
-        # hunter reward -> hunter advantage
-        # --------------------------------------------------
-
-        hunter_advantages, _ = self.compute_gae(
-            hunter_rewards,
-            values,
-            dones,
-        )
+        # İki aktör aynı takım avantajını kullanır.
+        # Ajanların ayrı ödülleri yalnızca izleme ve raporlama için tutulur.
+        scout_advantages = shared_advantages.copy()
+        hunter_advantages = shared_advantages.copy()
 
         # --------------------------------------------------
         # Convert to tensors
@@ -295,28 +271,16 @@ class HAPPO:
         # Normalize each agent independently
         # --------------------------------------------------
 
-        scout_advantages = (
+        scout_advantages = self.normalize_advantages(
             scout_advantages
-            - scout_advantages.mean()
-        ) / (
-            scout_advantages.std() + 1e-8
         )
 
-        hunter_advantages = (
+        hunter_advantages = self.normalize_advantages(
             hunter_advantages
-            - hunter_advantages.mean()
-        ) / (
-            hunter_advantages.std() + 1e-8
         )
 
-        # Shared advantage is retained for diagnostics
-        # and compatibility with the centralized setup.
-
-        shared_advantages = (
+        shared_advantages = self.normalize_advantages(
             shared_advantages
-            - shared_advantages.mean()
-        ) / (
-            shared_advantages.std() + 1e-8
         )
 
         return {
@@ -421,43 +385,37 @@ class HAPPO:
                 )
 
                 # --------------------------------------------------
-                # PPO ratio
+                # PPO policy ratio
                 # --------------------------------------------------
 
-                ratio = torch.exp(
-                    new_log_probs
-                    - old_log_batch
+                policy_ratio = torch.exp(
+                    new_log_probs - old_log_batch
                 )
 
-                # --------------------------------------------------
-                # HAPPO correction
-                # --------------------------------------------------
-
-                if correction_ratio is not None:
-
-                    ratio = (
-                        ratio
-                        * correction_ratio[idx]
+                # Önceden güncellenmiş ajanların etkisi clipping
+                # işleminden ayrı tutulmalıdır.
+                if correction_ratio is None:
+                    weighted_advantage = adv_batch
+                else:
+                    weighted_advantage = (
+                        correction_ratio[idx].detach()
+                        * adv_batch
                     )
 
-                # --------------------------------------------------
-                # PPO clipping
-                # --------------------------------------------------
-
-                clipped_ratio = torch.clamp(
-                    ratio,
+                clipped_policy_ratio = torch.clamp(
+                    policy_ratio,
                     1.0 - cfg.CLIP_EPSILON,
                     1.0 + cfg.CLIP_EPSILON,
                 )
 
                 surrogate_1 = (
-                    ratio
-                    * adv_batch
+                    policy_ratio
+                    * weighted_advantage
                 )
 
                 surrogate_2 = (
-                    clipped_ratio
-                    * adv_batch
+                    clipped_policy_ratio
+                    * weighted_advantage
                 )
 
                 policy_loss = -torch.min(
@@ -471,7 +429,7 @@ class HAPPO:
 
                 loss = (
                     policy_loss
-                    - cfg.ENTROPY_COEF
+                    - self.entropy_coef
                     * entropy
                 )
 
@@ -503,7 +461,7 @@ class HAPPO:
     # HAPPO update
     # ==================================================
 
-    def update(self, rollout):
+    def update(self, rollout, next_value=0.0,):
         """
         Perform one CTDE HAPPO update.
 
@@ -513,19 +471,8 @@ class HAPPO:
             2. Scout actor
             3. Hunter actor
 
-        Important reward structure:
-
-            Central critic:
-                shared reward
-
-            Scout actor:
-                scout-specific reward
-
-            Hunter actor:
-                hunter-specific reward
-
-        This prevents the Scout's reward from dominating
-        the Hunter's policy learning.
+        The critic and both actors use the shared team reward.
+        Sequential actor updates apply the HAPPO correction ratio.
         """
 
         if len(rollout["rewards"]) == 0:
@@ -537,7 +484,8 @@ class HAPPO:
             }
 
         batch = self._prepare_batch(
-            rollout
+            rollout,
+            next_value=next_value,
         )
 
         # ==================================================
@@ -577,65 +525,73 @@ class HAPPO:
             )
 
         # ==================================================
-        # 2. Scout actor update
+        # 2. Sequential actor updates
         # ==================================================
 
-        scout_result = self._update_actor(
-            actor=self.scout_actor,
-            optimizer=self.scout_optimizer,
-            observations=batch["scout_obs"],
-            actions=batch["scout_actions"],
-            old_log_probs=batch[
-                "old_scout_log_probs"
-            ],
-            advantages=batch[
-                "scout_advantages"
-            ],
+        actor_data = {
+            "scout": {
+                "actor": self.scout_actor,
+                "optimizer": self.scout_optimizer,
+                "observations": batch["scout_obs"],
+                "actions": batch["scout_actions"],
+                "old_log_probs": batch["old_scout_log_probs"],
+                "advantages": batch["scout_advantages"],
+            },
+            "hunter": {
+                "actor": self.hunter_actor,
+                "optimizer": self.hunter_optimizer,
+                "observations": batch["hunter_obs"],
+                "actions": batch["hunter_actions"],
+                "old_log_probs": batch["old_hunter_log_probs"],
+                "advantages": batch["hunter_advantages"],
+            },
+        }
+
+        update_order = ["scout", "hunter"]
+        np.random.shuffle(update_order)
+
+        correction_ratio = torch.ones_like(
+            batch["shared_advantages"]
         )
 
-        # ==================================================
-        # 3. Scout correction ratio
-        # ==================================================
+        actor_results = {}
 
-        with torch.no_grad():
+        for agent_name in update_order:
+            data = actor_data[agent_name]
 
-            scout_distribution = (
-                self.scout_actor
-                .get_action_distribution(
-                    batch["scout_obs"]
+            actor_results[agent_name] = self._update_actor(
+                actor=data["actor"],
+                optimizer=data["optimizer"],
+                observations=data["observations"],
+                actions=data["actions"],
+                old_log_probs=data["old_log_probs"],
+                advantages=data["advantages"],
+                correction_ratio=correction_ratio,
+            )
+
+            with torch.no_grad():
+                distribution = (
+                    data["actor"].get_action_distribution(
+                        data["observations"]
+                    )
                 )
-            )
 
-            new_scout_log_probs = (
-                scout_distribution.log_prob(
-                    batch["scout_actions"]
+                new_log_probs = distribution.log_prob(
+                    data["actions"]
                 )
-            )
 
-            scout_ratio = torch.exp(
-                new_scout_log_probs
-                - batch[
-                    "old_scout_log_probs"
-                ]
-            )
+                agent_ratio = torch.exp(
+                    new_log_probs
+                    - data["old_log_probs"]
+                )
 
-        # ==================================================
-        # 4. Hunter actor update
-        # ==================================================
+                correction_ratio = (
+                    correction_ratio
+                    * agent_ratio
+                )
 
-        hunter_result = self._update_actor(
-            actor=self.hunter_actor,
-            optimizer=self.hunter_optimizer,
-            observations=batch["hunter_obs"],
-            actions=batch["hunter_actions"],
-            old_log_probs=batch[
-                "old_hunter_log_probs"
-            ],
-            advantages=batch[
-                "hunter_advantages"
-            ],
-            correction_ratio=scout_ratio,
-        )
+        scout_result = actor_results["scout"]
+        hunter_result = actor_results["hunter"]
 
         # ==================================================
         # Results

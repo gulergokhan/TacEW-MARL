@@ -1,7 +1,11 @@
 import unittest
 
 from environment.gridworld import GridWorld
-
+from configs.environment_config import (
+    DISTANCE_REWARD_SCALE,
+    GOAL_REWARD,
+    STEP_REWARD,
+)
 
 class TestGridWorld(unittest.TestCase):
 
@@ -52,7 +56,16 @@ class TestGridWorld(unittest.TestCase):
         self.assertEqual(self.env.scout.position, (9, 9))
         self.assertTrue(info["reached_goal"])
         self.assertTrue(done)
-        self.assertEqual(reward, 101)
+        expected_reward = (
+            STEP_REWARD
+            + DISTANCE_REWARD_SCALE
+            + GOAL_REWARD
+        )
+
+        self.assertAlmostEqual(
+            reward,
+            expected_reward,
+        )
 
 
 if __name__ == "__main__":

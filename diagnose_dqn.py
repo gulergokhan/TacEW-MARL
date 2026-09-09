@@ -562,7 +562,8 @@ def main():
 
     checkpoint = torch.load(
         MODEL_PATH,
-        map_location="cpu"
+        map_location="cpu",
+        weights_only=True,
     )
 
     if "state_dict" in checkpoint:
